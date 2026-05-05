@@ -303,6 +303,7 @@ The target repository structure is:
 │       └── state_machine.py
 │
 └── README.md
+```
 
 ---
 
