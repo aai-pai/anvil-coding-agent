@@ -15,13 +15,13 @@ graph TD
         A[Chat Participant UI] -->|Prompt + Context| B[Custom Extension]
     end
 
-    subgraph "Local Execution Layer (API)"
+    subgraph "Local Execution Layer"
         B -->|REST/Websocket| C[FastAPI Wrapper]
         C -->|Action Command| D[OpenHands SDK]
         D -->|Shell/Edit| E[Sandbox Environment]
     end
 
-    subgraph "Inference Layer (Cloud)"
+    subgraph "Inference Layer"
         D -->|API Request| F[OpenRouter Gateway]
         F -->|Route| G[Claude 3 Haiku]
         F -->|Route| H[DeepSeek Coder]
