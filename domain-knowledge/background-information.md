@@ -67,6 +67,8 @@ The **development‑manager** is the central orchestrator. Its responsibilities 
 - Managing the **phase state machine** and tracking which phase is active.
 - Enforcing the selected **operational mode** (YOLO, gated, secure).
 - Delegating work to the appropriate **phase agent**.
+- Writing or ensuring the creation of **Architecture Decision Records (ADRs)** whenever a material architectural or design decision is made in any phase.
+- Receiving structured failure reports from phase agents, deciding whether rollback or upstream phase re-entry is required, recording the rollback reason in shared core context, and re-dispatching the selected upstream phase with the failure report attached.
 - Writing logs and status updates to the `logs/` directory.
 - Ensuring that each phase produces its expected artifacts in the `docs/` and other relevant directories.
 
@@ -227,7 +229,9 @@ The target repository structure is:
 │   │   └── software-specification.md
 │   │
 │   ├── architecture/
-│   │   └── system-architecture.md
+│   │   ├── system-architecture.md
+│   │   └── decisions/
+│   │       └── NNNN-<slug>.md
 │   │
 │   ├── development-plan/
 │   │   └── development-plan.md
@@ -401,8 +405,18 @@ This section records the authoritative intent for **Anvil** and should be treate
 ### Failure Handling and Escalation
 
 - Self-healing first: automatic retries and correction attempts should be standard behavior.
+- Structured failure reports from phase agents must be first-class inputs to the manager's recovery logic.
+- When a failure report identifies an upstream defect, invalid assumption, or architectural inconsistency, the manager must select the appropriate upstream phase to re-enter, persist the rollback reason in shared core context, and re-dispatch that phase with the failure report attached.
 - Human escalation only when self-healing is not converging.
 - Escalations should be clear, concise, and actionable.
+
+### Architectural Decision Records
+
+- The system must create an ADR whenever a material architectural or design decision is made, regardless of which phase produces the decision.
+- ADRs must be stored in `docs/architecture/decisions/` using one decision per file.
+- ADR filenames must follow the pattern `NNNN-<slug>.md` with monotonic numbering.
+- Each ADR must use a standard structure containing at least: context, decision, consequences, and alternatives considered.
+- ADRs are the durable record of why the system is shaped the way it is and must be available as input to later phases, rollback analysis, and future maintenance.
 
 ### State Persistence and Resume Behavior
 
