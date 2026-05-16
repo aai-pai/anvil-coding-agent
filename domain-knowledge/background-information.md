@@ -110,15 +110,15 @@ The factory will implement the following phases:
    - Output: `docs/architecture/system-architecture.md`  
    - Description: Define system architecture, modules, interfaces, and data flows.
 
-5. **SW Development Plan Creation Phase**  
-   - Agent: `dev_plan_agent`  
-   - Output: `docs/development-plan/development-plan.md`  
-   - Description: Create a development roadmap, milestones, and task breakdown.
-
-6. **Code Blueprint Creation Phase**  
+5. **Code Blueprint Creation Phase**  
    - Agent: `blueprint_agent`  
    - Output: `docs/blueprints/code-blueprint.md`  
    - Description: Generate high‑level code blueprints, scaffolding, and module outlines.
+
+6. **SW Development Plan Creation Phase**  
+   - Agent: `dev_plan_agent`  
+   - Output: `docs/development-plan/development-plan.md`  
+   - Description: Create a development roadmap, milestones, and task breakdown based on the blueprints.
 
 7. **Code Implementation Phase**  
    - Agent: `implementation_agent`  
@@ -233,11 +233,11 @@ The target repository structure is:
 │   │   └── decisions/
 │   │       └── NNNN-<slug>.md
 │   │
-│   ├── development-plan/
-│   │   └── development-plan.md
-│   │
 │   ├── blueprints/
 │   │   └── code-blueprint.md
+│   │
+│   ├── development-plan/
+│   │   └── development-plan.md
 │   │
 │   ├── qa/
 │   │   └── qa-test-plan.md
@@ -283,8 +283,8 @@ The target repository structure is:
 │   │   ├── factory_init_agent.py
 │   │   ├── specification_agent.py
 │   │   ├── architecture_agent.py
-│   │   ├── dev_plan_agent.py
 │   │   ├── blueprint_agent.py
+│   │   ├── dev_plan_agent.py
 │   │   ├── implementation_agent.py
 │   │   ├── qa_agent.py
 │   │   ├── packaging_agent.py
@@ -443,6 +443,7 @@ This section records the authoritative intent for **Anvil** and should be treate
 
 - v0.1.0 recommendation: in-process agent invocation with strict contracts for simplicity and reliability.
 - Future direction: evolve transport to a message queue/event bus without changing agent contracts.
+- **A2A peer transport is explicitly out of scope for v0.1.0.** Agent contracts must be designed transport-agnostic so A2A can be added in a future release without reworking business logic. Programmatic/orchestrator callers are served by the localhost REST API in v0.1.0.
 
 ### UX and Control Surface
 
