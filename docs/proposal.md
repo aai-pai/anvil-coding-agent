@@ -74,13 +74,13 @@ Strategic direction after v0.1.0: use Anvil to build additional Anvil capabiliti
 - Mandatory dependency on GHCP runtime.
 - Distributed message-bus architecture (planned future evolution).
 - Agent-to-Agent (A2A) peer transport protocol — v0.1.0 uses in-process agent invocation and the localhost REST API for all coordination; A2A is explicitly deferred to a future release once agent contracts are proven stable.
-- Build and deployment execution — v0.1.0 packaging and deployment phases are documentation-first. Agents emit plans, scripts, and templates under `docs/packaging/` and `docs/deployment/`, but do not execute builds or deployments.
+- Build and deployment execution — v0.1.0 packaging and deployment phases are documentation-first. Agents emit plans (`docs/packaging-plan.md`, `docs/deployment-plan.md`) and any associated scripts or templates as static files, but do not execute builds or deployments. End-to-end automated deployment execution is a designated milestone for a future release.
 
 ## 7. Operating Modes
 
 - YOLO: full autonomous progression with no user stops.
 - Gated: user selects phases requiring approval.
-- Secure: four mandatory approval checkpoints — Post-Proposal, Post-Architecture, Post-Blueprint, and Pre-Deployment. Users may add further checkpoints but cannot remove these four.
+- Secure: four mandatory approval checkpoints — Post-Proposal, Post-Architecture, Post-Blueprint, and Pre-Deployment-Plan (the gate before the deployment-planning phase emits its artifact, since v0.1.0 deployment is documentation-first). Users may add further checkpoints but cannot remove these four.
 
 Mode behavior is enforced by the development-manager phase controller.
 
@@ -101,7 +101,7 @@ Each phase agent has:
 
 ### 8.3 Artifact-First Workflow
 
-Long-form artifacts are produced in `docs/` and serve as control points:
+Long-form artifacts produced in `docs/` form the core design-and-implementation control chain:
 
 1. Proposal
 2. Specification
@@ -110,7 +110,7 @@ Long-form artifacts are produced in `docs/` and serve as control points:
 5. Implementation Plan
 6. Implementation and QA outputs
 
-This sequencing reduces drift by requiring explicit design intent before code generation.
+This sequencing reduces drift by requiring explicit design intent before code generation. The remaining phases in the twelve-phase pipeline (factory init, packaging, documentation, deployment, cleanup) complement this core chain and are enumerated in §9.
 
 ### 8.4 Policy and Governance Layer
 
@@ -128,7 +128,7 @@ User-level intent and policy live in `~/.anvil/`. At run start, effective runtim
 
 ### 8.6 Phase Execution Model
 
-Phases form a dependency-aware DAG: each declares its prerequisites and the supervisor executes them in topological order. v0.1.0 runs serially to keep resume and self-heal semantics simple; parallel execution is a deferred non-goal. The DAG declaration is forward-compatible, so a future scheduler can parallelize without changing phase contracts.
+Phases form a dependency-aware DAG: each declares its prerequisites and the supervisor executes them in topological order. v0.1.0 runs serially to keep resume and self-heal semantics simple; DAG-based parallel execution is explicitly deferred and designated as a core milestone for a future release. The DAG declaration is forward-compatible, so a future scheduler can parallelize without changing phase contracts.
 
 ### 8.7 Skills Layer
 
@@ -155,22 +155,22 @@ This applies uniformly to policies, hooks, skills, MCP server selection, and mod
 
 ## 9. Proposed Phases and Deliverables
 
-Anvil executes a twelve-phase pipeline. Each phase is owned by a dedicated agent with a defined input/output contract and emits artifacts under `docs/`, `src/`, `tests/`, `build/`, `deployment/`, or `logs/` as applicable:
+Anvil executes a twelve-phase pipeline. Each phase is owned by a dedicated agent with a defined input/output contract and emits artifacts under `docs/`, `src/`, `tests/`, or `logs/` as applicable (consistent with the documentation-first scope in §6, no `build/` or `deployment/` execution outputs are produced in v0.1.0):
 
 | # | Phase | Agent | Primary Output |
 |---|---|---|---|
-| 1 | Proposal Development | `proposal_agent` | `docs/proposal/code-proposal.md` |
+| 1 | Proposal Development | `proposal_agent` | `docs/proposal.md` |
 | 2 | Factory Initialization | `factory_init_agent` | Initial repository structure (`docs/`, `src/`, `tests/`, `logs/`, …) |
-| 3 | Specification Development | `specification_agent` | `docs/specifications/software-specification.md` |
-| 4 | Architecture Design | `architecture_agent` | `docs/architecture/system-architecture.md` |
-| 5 | Development Plan Creation | `dev_plan_agent` | `docs/development-plan/development-plan.md` |
-| 6 | Code Blueprint Creation | `blueprint_agent` | `docs/blueprints/code-blueprint.md` |
+| 3 | Specification Development | `specification_agent` | `docs/spec.md` |
+| 4 | Architecture Design | `architecture_agent` | `docs/architecture.md` |
+| 5 | Code Blueprint Creation | `blueprint_agent` | `docs/blueprint.md` |
+| 6 | Development Plan Creation | `dev_plan_agent` | `docs/plan.md` |
 | 7 | Code Implementation | `implementation_agent` | Source code under `src/` |
-| 8 | Quality Assurance Testing | `qa_agent` | `docs/qa/qa-test-plan.md` plus tests under `tests/unit/`, `tests/integration/`, `tests/e2e/` |
-| 9 | Packaging | `packaging_agent` | `docs/packaging/packaging-plan.md` plus `build/` artifacts |
-| 10 | Documentation Writing | `documentation_agent` | `docs/documentation/documentation-plan.md` |
-| 11 | Deployment | `deployment_agent` | `docs/deployment/deployment-plan.md` plus `deployment/` scripts |
-| 12 | Factory Cleanup | `cleanup_agent` | `docs/summary/phase-summary-log.md` |
+| 8 | Quality Assurance Testing | `qa_agent` | `docs/qa-test-plan.md` plus tests under `tests/unit/`, `tests/integration/`, `tests/e2e/` |
+| 9 | Packaging | `packaging_agent` | `docs/packaging-plan.md` (plus any scripts/templates as static files; no build execution) |
+| 10 | Documentation Writing | `documentation_agent` | `docs/documentation-plan.md` |
+| 11 | Deployment | `deployment_agent` | `docs/deployment-plan.md` (plus any scripts/templates as static files; no deploy execution) |
+| 12 | Factory Cleanup | `cleanup_agent` | `docs/phase-summary-log.md` |
 
 Phase dependencies are encoded in the DAG (see §8.6); the supervisor selects ready phases according to current state, operational mode, and approval gates.
 
@@ -197,7 +197,7 @@ Phase dependencies are encoded in the DAG (see §8.6); the supervisor selects re
 - Use VS Code Secret Storage for OpenRouter key by default.
 - Support `OPENROUTER_API_KEY` environment fallback for CI/headless.
 - Redact sensitive values from logs and escalation payloads.
-- Apply configurable network/tool access profiles (`open`, `restricted`, `strict`).
+- Apply configurable security profiles (`open`, `restricted`, `strict`) governing network and tool access; same triplet referenced by §8.7 and §8.9.
 
 ## 13. Risks and Mitigations
 

@@ -108,15 +108,15 @@ The factory will implement the following phases:
    - Output: `docs/architecture/system-architecture.md`  
    - Description: Define system architecture, modules, interfaces, and data flows.
 
-5. **SW Development Plan Creation Phase**  
-   - Agent: `dev_plan_agent`  
-   - Output: `docs/development-plan/development-plan.md`  
-   - Description: Create a development roadmap, milestones, and task breakdown.
-
-6. **Code Blueprint Creation Phase**  
+5. **Code Blueprint Creation Phase**  
    - Agent: `blueprint_agent`  
    - Output: `docs/blueprints/code-blueprint.md`  
    - Description: Generate high‑level code blueprints, scaffolding, and module outlines.
+
+6. **SW Development Plan Creation Phase**  
+   - Agent: `dev_plan_agent`  
+   - Output: `docs/development-plan/development-plan.md`  
+   - Description: Create a development roadmap, milestones, and task breakdown based on the blueprints.
 
 7. **Code Implementation Phase**  
    - Agent: `implementation_agent`  
@@ -229,11 +229,11 @@ The target repository structure is:
 │   ├── architecture/
 │   │   └── system-architecture.md
 │   │
-│   ├── development-plan/
-│   │   └── development-plan.md
-│   │
 │   ├── blueprints/
 │   │   └── code-blueprint.md
+│   │
+│   ├── development-plan/
+│   │   └── development-plan.md
 │   │
 │   ├── qa/
 │   │   └── qa-test-plan.md
@@ -279,8 +279,8 @@ The target repository structure is:
 │   │   ├── factory_init_agent.py
 │   │   ├── specification_agent.py
 │   │   ├── architecture_agent.py
-│   │   ├── dev_plan_agent.py
 │   │   ├── blueprint_agent.py
+│   │   ├── dev_plan_agent.py
 │   │   ├── implementation_agent.py
 │   │   ├── qa_agent.py
 │   │   ├── packaging_agent.py
