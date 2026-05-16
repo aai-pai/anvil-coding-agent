@@ -429,6 +429,7 @@ This section records the authoritative intent for **Anvil** and should be treate
 
 - v0.1.0 recommendation: in-process agent invocation with strict contracts for simplicity and reliability.
 - Future direction: evolve transport to a message queue/event bus without changing agent contracts.
+- **A2A peer transport is explicitly out of scope for v0.1.0.** Agent contracts must be designed transport-agnostic so A2A can be added in a future release without reworking business logic. Programmatic/orchestrator callers are served by the localhost REST API in v0.1.0.
 
 ### UX and Control Surface
 

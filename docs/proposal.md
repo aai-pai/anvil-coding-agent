@@ -23,6 +23,8 @@ Anvil addresses these gaps by combining a supervisor pattern, explicit artifact 
 Anvil should be a dependable coding agent platform that:
 
 - Runs locally as a VS Code extension.
+- Runs a localhost REST API service (Anvil runtime) with versioned endpoints for run control, phase state, artifacts, events, and health.
+- Uses the VS Code extension as a thin client that calls those localhost endpoints.
 - Uses OpenHands as the orchestration engine.
 - Uses OpenRouter for configurable multi-model routing.
 - Produces high-quality artifacts in `docs/` before and during implementation.
@@ -70,6 +72,7 @@ Strategic direction after v0.1.0: use Anvil to build additional Anvil capabiliti
 - Model fine-tuning or model training.
 - Mandatory dependency on GHCP runtime.
 - Distributed message-bus architecture (planned future evolution).
+- Agent-to-Agent (A2A) peer transport protocol — v0.1.0 uses in-process agent invocation and the localhost REST API for all coordination; A2A is explicitly deferred to a future release once agent contracts are proven stable.
 
 ## 7. Operating Modes
 
