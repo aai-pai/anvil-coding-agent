@@ -131,7 +131,7 @@ All artifacts are stored in the repository and indexed in a central artifact man
 
 #### 2.4.1 YOLO Mode (Fully Autonomous)
 - **FR-OM-001**: Supervisor automatically advances through all 12 phases without pausing.
-- **FR-OM-002**: Approval gates are skipped; mandatory checkpoints are not enforced.
+- **FR-OM-002**: User-facing approval gates are skipped in YOLO mode, including Secure-mode mandatory approval checkpoints; internal supervisor controls (artifact validation, drift checks, policy enforcement, retries/escalation, and run-state checkpointing) remain enforced.
 - **FR-OM-003**: User can still interrupt or cancel the run at any time; on resume, run continues from last completed phase (checkpoint-based resume, §2.1.6).
 - **FR-OM-004**: Escalations still pause the run and require user intervention (self-heal retry budget is exhausted).
 
