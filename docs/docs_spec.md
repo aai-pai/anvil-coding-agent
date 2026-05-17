@@ -1,10 +1,10 @@
-# Anvil Software Requirements Specification: RL Policy Amendment Loop (v1.0.0)
+# Anvil Software Specification: The Smart RL Update Loop (v1.0.0)
 
-## 1. Introduction & Schema Definitions
-This Software Requirements Specification (SRS) establishes the deterministic technical contracts, interface architectures, and schema structures for the Autonomous Reinforcement Learning Policy Amendment Engine within the Anvil ecosystem.
+## 1. Introduction & Communication Contracts
+This document translates our high-level proposal into clear, rigid engineering instructions, exact communication patterns, and strict data rules.
 
-### 1.1 Data Model: State Machine State Registry ($SM_n$)
-The system state machine state representation must explicitly adhere to the following strict JSON schema definition:
+### 1.1 The Data Blueprint: How States Look (JSON Schema)
+Every time the system records a state machine or environmental status ($SM_n$), it must be saved in this exact structure so the AI brainstorming engine can read it perfectly:
 
 ```json
 {
@@ -39,12 +39,14 @@ The system state machine state representation must explicitly adhere to the foll
 }
 ```
 
-## 2. Interface Contracts & API Specifications
+## 2. API Endpoint Contracts: How the Systems Talk
 
-### 2.1 Policy Request Endpoint: OpenClaw to OpenHands SDK
-- **Endpoint URL:** `POST http://localhost:8080/api/v1/policy/request_update`
-- **Headers:** `Content-Type: application/json`
-- **Payload Contract:**
+### 2.1 The Update Call (OpenClaw $
+ightarrow$ OpenHands SDK)
+When the background Watchman decides it's time for an update, it sends a web request to the OpenHands SDK endpoint.
+
+- **URL:** `POST http://localhost:8080/api/v1/policy/request_update`
+- **Request Body (What goes in):**
 ```json
 {
   "trigger_source": "SATM_BOREDOM_SIGNAL",
@@ -58,7 +60,7 @@ The system state machine state representation must explicitly adhere to the foll
   "raw_sensory_log_path": "logs/telemetry/run_failure_20260517.json"
 }
 ```
-- **Response Contract (202 Accepted):**
+- **Response Box (What comes back instantly):**
 ```json
 {
   "request_id": "req-98765-es-loop",
@@ -71,52 +73,46 @@ The system state machine state representation must explicitly adhere to the foll
 ```mermaid
 sequenceDiagram
     autonumber
-    participant OC as OpenClaw Environment
-    participant SATM as SATM Background Sentinel
-    participant OH as OpenHands SDK
-    participant DBX as Isolated Docker Sandbox
+    participant OC as OpenClaw Live Software
+    participant SATM as The Watchman Sentinel
+    participant OH as OpenHands Brainstormer
+    participant DBX as Isolated Sandbox Playground
 
-    OC->>SATM: Stream Real-Time Telemetry & Cycles
-    Note over SATM: Evaluates Information Gain Delta<br/>& Stagnation Cycles
-    SATM->>OH: POST /api/v1/policy/request_update (Failure Context & History)
-    OH-->>SATM: 202 Accepted (Tracking ID)
+    OC->>SATM: Stream Active Metrics & Actions
+    Note over SATM: Calculates if system is bored<br/>or thrashing in circles
+    SATM->>OH: POST /api/v1/policy/request_update (Send History & Failure Log)
+    OH-->>SATM: 202 Accepted (Tracking ID Received)
     
-    Note over OH: Spawns Evolutionary Optimizer<br/>Scales Mutations (1-sigma / 2-sigma)
-    OH->>OH: Run Pass 1: Static Replay Filter
+    Note over OH: Spawns Evolutionary Brainstormer<br/>Creates Small & Large Idea Mutations
+    OH->>OH: Run Filter 1: Quick Historical Replay
     
-    loop Evolutionary Generations until Fitness Plateaus
-        OH->>DBX: Spin Up Isolated Evaluation Container
+    loop Test New Settings Until Performance Flattens Out
+        OH->>DBX: Launch Isolated Sandbox Container
         DBX->>DBX: Inject Synthetic Telemetry Stream
-        DBX-->>OH: Emit Generation Fitness Metrics
+        DBX-->>OH: Return Score for this Generation
     end
     
-    OH->>OC: Deliver Verified policy_delta.json (Config Precedence Override)
+    OH->>OC: Deliver Verified policy_delta.json (Safely Update Rules)
 ```
 
-## 3. Detailed Functional Requirements
+## 3. Detailed Software Requirements
 
-### 3.1 Self-Awareness & Telemetry Monitor (SATM) Execution
-- **REQ-SATM-010:** The SATM module shall run continuously as a lightweight background observer thread decoupled from OpenClaw's primary blocking execution stack.
-- **REQ-SATM-011:** The SATM shall compute the rolling value of Information Gain ($\Delta I$) every $100	ext{ms}$. If $\Delta I \le 0.005$ across 50 consecutive operational cycles while state machine transition logs indicate active resource utilization, the SATM must dispatch a `SATM_BOREDOM_SIGNAL` to trigger optimization.
-- **REQ-SATM-012:** The SATM shall track the logical entropy of state mutations. If a state transition path toggles cyclically between a closed cluster of states ($SM_A \leftrightarrow SM_B$) without advancing to downstream system milestones within 10 iterations, the system shall assert an immediate `SATM_DEADLOCK_SIGNAL`.
+### 3.1 Rules for the Watchman (SATM)
+- **REQ-SATM-010:** The Watchman thread must run quietly in the background without slowing down OpenClaw’s main tasks.
+- **REQ-SATM-011 (Boredom Trigger):** The Watchman must check performance metrics every $100	ext{ms}$. If the amount of new data/learning falls below $0.005$ for 50 cycles in a row while the system is still consuming tokens or power, it must fire a `SATM_BOREDOM_SIGNAL` to force an update.
+- **REQ-SATM-012 (Loop Trigger):** If the system bounces back and forth between a closed loop of states ($SM_A \leftrightarrow SM_B$) 10 times in a row without making forward progress, it must fire a `SATM_DEADLOCK_SIGNAL`.
 
-### 3.2 Evolutionary Engine Mutation Boundaries
-- **REQ-EVO-020:** The reasoning engine shall compute candidate offspring sizes dynamically, restricting standard population baselines to $10 \le P_{size} \le 20$ to maintain token and compute boundaries.
-- **REQ-EVO-021:** When processing an unknown state transition boundary error (`SATM_NOVELTY_SIGNAL`), the engine's mutation operator must enforce a broad $\pm2\sigma$ structural rewrite of state path routing matrix keys to map the new terrain.
-- **REQ-EVO-022:** When correcting smooth execution drift (`SATM_DRIFT_SIGNAL`), the engine must enforce a narrow $\pm1\sigma$ variation restricted strictly to continuous numerical weight modifications.
-- **REQ-EVO-023:** The optimization algorithm shall apply elitist selection mechanisms, carrying forward the top $10\%$ highest-performing genomes completely unchanged into the subsequent generation.
+### 3.2 Rules for the Brainstormer (Evolutionary Engine)
+- **REQ-EVO-020 (Cost Constraints):** To save money on LLM API tokens, each batch of ideas (the population size) must be kept strictly between 10 and 20 candidates.
+- **REQ-EVO-021 (New Surfaces):** When an update is triggered by a brand-new environment (`SATM_NOVELTY_SIGNAL`), the engine must perform a bold $\pm2\sigma$ overhaul to the state mapping logic to find a path out.
+- **REQ-EVO-022 (Smooth Adjustments):** When adjusting simple tracking errors (`SATM_DRIFT_SIGNAL`), the engine must stick to small, subtle $\pm1\sigma$ tweaks to numerical weights only.
+- **REQ-EVO-023 (Survival of the Fittest):** The algorithm must use elitist selection, meaning the top $10\%$ best-performing ideas are carried forward into the next batch completely untouched.
 
-### 3.3 Sandbox Isolation & Defensive Resource Constraints
-- **REQ-SND-030:** All dynamic telemetry rollout simulations must execute within ephemeral, headless Docker execution containers managed via the OpenHands client interface.
-- **REQ-SND-031:** The dynamic sandbox container lifecycle must be bounded by a hard execution timeout limit of $15000	ext{ms}$. Any candidate execution exceeding this threshold must be automatically terminated, logged as a terminal failure, and assigned an absolute zero fitness score.
-- **REQ-SND-032:** Network access inside the simulation sandbox shall be set to `strict` mode, fully blocking external internet routing and confining all validation traffic to local loopback adapters (`127.0.0.1`).
+### 3.3 Rules for the Digital Sandbox (Safety Rails)
+- **REQ-SND-030:** All dynamic tests must run in isolated, headless Docker containers handled by OpenHands.
+- **REQ-SND-031 (The Kill Switch):** A test container is allowed to run for a maximum of 15 seconds ($15000	ext{ms}$). If a candidate policy gets stuck or takes longer than that, the playground must kill it immediately, log it as a failure, and give it a zero score.
+- **REQ-SND-032 (No Internet Access):** The test sandbox must have network access set to `strict` mode. It is fully blocked from accessing the external internet, keeping all testing entirely inside local loopback adapters (`127.0.0.1`).
 
-### 3.4 Termination & Verification Parameters
-- **REQ-TRM-040:** The optimizer framework shall terminate an ongoing run when the rolling mean performance improvement of the fitness score across the top $30\%$ of the population drops below a slope threshold of $rac{dF}{dG} \le 0.01$ over two sequential generations.
-- **REQ-TRM-041:** Upon reaching convergence confirmation, the system must perform a cryptographic signature check and structure validation pass against the proposed `policy_delta.json` file prior to staging deployment to the production OpenClaw registry.
-
-## 4. Architectural Traceability & Gap Analysis
-A detailed verification matrix mapping shows complete logical continuity between the initial functional goals and these specification constructs:
-- **Proposal §3 (Triggers) $ightarrow$ SRS §2.1 & §3.1:** Validates the explicit mapping of Boredom, Stagnation, and Terrain-Novelty criteria directly into JSON structures and programmatic evaluation intervals.
-- **Proposal §4.2 ($\sigma$-Scaling) $ightarrow$ SRS §3.2:** Explicitly codifies the operational meaning of $\pm1\sigma$ local tweaks vs. $\pm2\sigma$ macroscopic structure mutation constraints.
-- **Proposal §5 (Sandbox Separation) $ightarrow$ SRS §3.3:** Defines defensive time boundaries ($15	ext{s}$ ceiling) and local loopback limits ensuring compliance with Anvil's token optimization directives.
+### 3.4 When to Stop Brainstorming (Convergence)
+- **REQ-TRM-040:** The engine will stop creating new batches of ideas when the improvement curve flattens out. If the performance gains of the top ideas change by less than $1\%$ ($rac{dF}{dG} \le 0.01$) over two successive generations, the loop wraps up.
+- **REQ-TRM-041:** Before pushing the final `policy_delta.json` back to the live robot, the engine must run a security code check to verify that the file's structure is perfectly uncorrupted.
