@@ -1,58 +1,58 @@
-# Anvil Feature Proposal: Autonomous Reinforcement Learning Policy Amendment Loop (v1.0.0)
+# Anvil Feature Proposal: The Smart Reinforcement Learning Update Loop (v1.0.0)
 
-## 1. Executive Summary
-This proposal specifies an extension to the **Anvil** multi-agent development factory: an autonomous, supervisor-orchestrated Reinforcement Learning (RL) Policy Amendment Engine. Operating as a specialized capability within the Anvil ecosystem, this module enables swarm, orchestrator, or edge robotic runtimes (e.g., **OpenClaw**) to request dynamic policy updates from the **OpenHands SDK**. The core objective is to deliver a sample-efficient, risk-sensitive, evolutionary optimization pipeline that transforms operational failures and "existential boredom" into verified, resilient policy updates ($\Delta RL$) via an isolated Docker simulation sandbox.
+## 1. Summary
+This proposal introduces a new feature for **Anvil** (our automated coding team): a smart, self-correcting update system for software or robots running on **OpenClaw**. 
 
-## 2. Problem Statement & Context
-Complex agentic workflows and automated cyber-physical systems operating in non-sterile, dynamic environments frequently encounter three critical operational boundary failures:
-1. **Unmodeled Environmental Transitions:** Structural shifts in external dynamics (e.g., a robot transitioning from smooth grass to high-friction sand) render the active baseline policy unstable.
-2. **Gradient Discontinuity:** The active policy runtime comprises heterogeneous parameters—discrete prompt instructions, brittle state-machine schemas, and continuous numerical boundaries. Standard gradient-descent optimization cannot compute derivatives across these mixed-type systems.
-3. **Exploration Over-Filtering ("Pain-Avoidance Fragility"):** Standard automated correction loops often penalize all transient telemetry errors equally. This produces fragile, overly cautious behavior that overfits to sterile environments and deadlocks or crashes when confronted with normal real-world friction.
+When OpenClaw runs into a situation it doesn't understand, it calls the **OpenHands SDK**. OpenHands acts like an AI engineering brainstorming room. It studies what went wrong, plays around with new rules using an evolutionary approach (trial and error), tests them safely inside a hidden digital playground (a Docker container), and delivers a finely tuned update file ($\Delta RL$) to get the system back on track.
 
-## 3. System Scope & Core Flow
-The proposed engine functions as a closed-loop reactive optimization framework. It decouples the live operational runtime from the heavy evolutionary reasoning loop, keeping execution token-efficient and safeguarding live hardware or mission-critical systems.
+## 2. The Problems We Are Solving
+When AI agents or robots operate in the real world, they usually run into three major roadblocks:
+1. **The World Changes Unexpectly:** A robot navigating smoothly on grass suddenly hits soft sand. The old way of moving no longer works, and the system begins to slip or fail.
+2. **You Can't Just Use Math to Tweak Prompts:** The system's rules are a messy mix of English instructions (prompts), code logic, and numbers. You can't use standard calculus or gradient math to calculate how to fix a paragraph of text.
+3. **Over-Filtering and "Fear" (Fragility):** If an automated fixer tries to eliminate *every single tiny error*, the robot becomes too afraid to move. It over-corrects, gets stuck, and freezes up the second it encounters normal real-world friction.
+
+## 3. How the Core Workflow Works
+This system runs a smart loop that isolates the live, busy robot or software from the heavy thinking required to rewrite code. This keeps costs down and keeps the live environment safe.
 
 ```mermaid
 flowchart TD
-    subgraph OpenClaw Runtime [OpenClaw Active Environment]
-        A[Live Operation & State Tracking] --> B{SATM Monitor Sentinel}
-        B -->|Trigger Fired: Novelty/Drift/Boredom| C[Capture State Machine History SM_1..n & Telemetry Logs]
-        C -->|POST /api/v1/policy/request_update| D[OpenHands SDK Interface]
+    subgraph OpenClaw Runtime [OpenClaw Live Environment]
+        A[Live Operation & State Tracking] --> B{The Watchman SATM Monitor}
+        B -->|Trigger Fired: Novelty/Drift/Boredom| C[Gather Recent Logs & Sensor Data]
+        C -->|Send Update Request| D[OpenHands SDK Interface]
     end
 
-    subgraph OpenHands SDK [Evolutionary Reasoning Engine]
-        D --> E[Formulate Multi-Objective Cost Function E]
-        E --> F[Generate Mutated Offspring Population]
-        F -->|Scale Exploration Matrix via 1-sigma & 2-sigma Operators| G[Pass 1: Static Replay Screening Pass]
-        G -->|Prune Lethal Mutations| H[Resilient Candidates Only]
-        H --> I[Pass 2: Isolated Docker Sandbox Run with Live Telemetry Stream]
-        I --> J[Evaluate Rolling Fitness Convergence Curve]
-        J --> K{Has Fitness Score Plateaued?}
-        K -- No: Next Generation --> F
-        K -- Yes: Convergence Reached --> L[Freeze & Verify Best Performing Candidate delta-RL]
+    subgraph OpenHands SDK [The Brainstorming Engine]
+        D --> E[Build a Scoring System / Cost Function]
+        E --> F[Create a Batch of 10-20 Brainstorm Ideas]
+        F -->|Make Small Tweaks & Big Bolder Ideas| G[Filter 1: Quick Historical Replay Pass]
+        G -->|Throw Away Ideas that Crash Instantly| H[Keep Safe Ideas Only]
+        H --> I[Filter 2: Test in a Isolated Digital Playground]
+        I --> J[Watch the Improvement Progress Curve]
+        J --> K{Has Performance Stopped Improving?}
+        K -- No: Try Another Generation --> F
+        K -- Yes: Best Settings Reached --> L[Lock in and Verify the Final Update File]
     end
 
-    L -->|Apply Update: Configuration Precedence Override| A
+    L -->|Apply Update: Safely Override the Old Rules| A
 ```
 
-## 4. Architectural Integrations & Components
+## 4. The Core Components
 
-### 4.1 Self-Awareness & Telemetry Monitor (SATM)
-The SATM acts as an asynchronous background supervisor wrapped directly around the active state machine runtime. It tracks historical execution profiles and evaluates system health against two key metrics:
-- **Information Gain ($\Delta I$):** Calculated as the absolute delta of performance tracking error between steps ($\Delta I = |E_n - E_{n-1}|$). When $\Delta I$ drops below a specified threshold ($\epsilon$) across a sustained execution window while resource consumption (tokens, power, cycles) climbs, the SATM identifies **"Existential Boredom"** and triggers a policy amendment request.
-- **Goal Entropy & Stagnation:** Evaluates structural deadlock when a system remains trapped in a specific operational sub-phase $j_x$ for $n$ cycles without progressing to phase $j_{x+1}$.
+### 4.1 The "Watchman" Sentinel (SATM)
+The Self-Awareness and Telemetry Monitor (SATM) is a lightweight background thread that sits on the robot or active software. It is always awake, watching the logs and asking two smart questions:
+- **"Am I completely bored?" (Information Gain):** It measures how much the system is learning. If the robot is burning computing power, time, or tokens, but its success rate is completely flatlining, the Watchman triggers an update because the system is spinning its wheels without making progress.
+- **"Am I stuck in a loop?" (Stagnation):** If the system keeps bouncing back and forth between two identical states without actually finishing the job, the Watchman notices the deadlock and forces an evolutionary update.
 
-### 4.2 Evolutionary Optimization Engine
-Because gradients cannot be computed, the runtime leverages an **Evolution Strategies (ES)** model managed by the OpenHands framework using DeepSeek Coder and Claude models via OpenRouter:
-- **The Chromosome String:** Encodes combined discrete and continuous variables including state-transition threshold logic, prompt execution strings, and multi-objective numerical resource weights.
-- **$\sigma$-Scaled Mutation Operators:** Mutation vectors are strictly scaled based on environmental context. Tight $\pm1\sigma$ optimization handles incremental tracking drift. Bolder $\pm2\sigma$ mutations alter core state graphs and transitions when negotiating completely unmodeled environments ($SM_x$). Catastrophic $\pm3\sigma$ changes are structurally suppressed to minimize unviable exploration.
+### 4.2 The Evolutionary Brainstormer (Trial-and-Error)
+Because we can't use standard math to tweak written instructions or state logic, the OpenHands engine acts like nature—it uses evolution:
+- **The Chromosome (The DNA):** The engine bundles up the software's prompt rules, numbers, and logic into a single packet it can modify.
+- **Smart Scaling ($\sigma$-operators):** It creates variations of this DNA based on the situation. For minor drift, it makes small, careful adjustments ($\pm1\sigma$). If the system hits a brand-new surface like sand, it makes big, bold structural leaps to the logic ($\pm2\sigma$). It blocks wild, chaotic changes ($\pm3\sigma$) that would break the software entirely.
 
-### 4.3 Risk-Sensitive Cost Function ("Non-Lethal Pain")
-The system defines a global cost function:
-$$E = f(SM_n, \sum_{i=1}^{n} SM_i, \mathcal{O}_{main})$$
-The calculation structurally permits soft penalties (transient motor slippage, network latency, minor token spikes) if they contribute empirical variance data that optimizes the system's long-term survival and macro-objective tracking. The complete elimination of short-term friction is actively penalized, preventing the policy from freezing up in complex scenarios.
+### 4.3 Designing for "Non-Lethal Pain"
+A core rule of our scoring system is that **minor pain is good for long-term survival**. The system explicitly tolerates minor, harmless friction—like a wheel slipping slightly on sand, brief API lag, or a small spike in token usage—if it means getting valuable data that helps achieve the main goal. Trying to completely avoid all minor discomfort makes software fragile; allowing "non-lethal pain" makes it robust.
 
-### 4.4 Tiered Sandbox Sieve
-To protect the local context from token or compute depletion, evaluation runs are structured as a two-tiered sieve:
-1. **Static Replay Pass:** Simulates the candidate policy against the exact array of immutable sensory logs captured during the live failure event. Code syntax anomalies and unviable logical forks are caught and culled immediately.
-2. **Dynamic Live Sandbox:** Surviving candidates are mounted inside temporary, isolated Docker containers. The container streams mock real-time telemetry back into the state engine to observe dynamic compliance and calculate the terminal fitness plateau before pushing updates live via configuration precedence principles.
+### 4.4 The Two-Stage Sieve (Saving Time and Money)
+To make sure we don't blow through API token budgets testing bad ideas, we run a two-step screening process:
+1. **The Static Replay:** We take the brainstormed ideas and play them against a recorded video/log of the exact moment the system failed. If an idea breaks basic coding rules or crashes immediately, we delete it right away without spending money on it.
+2. **The Live Sandbox Playground:** Only the ideas that pass the replay test get to run inside isolated, temporary Docker containers. Here, we stream simulated real-world data to see how they adapt dynamically.
