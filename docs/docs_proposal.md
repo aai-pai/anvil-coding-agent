@@ -5,13 +5,13 @@ This proposal introduces a new feature for **Anvil** (our automated coding team)
 
 When OpenClaw runs into a situation it doesn't understand, it calls the **OpenHands SDK**. OpenHands acts like an AI engineering brainstorming room. It studies what went wrong, plays around with new rules using an evolutionary approach (trial and error), tests them safely inside a hidden digital playground (a Docker container), and delivers a finely tuned update file ($\Delta RL$) to get the system back on track.
 
-## 2. The Problems We Are Solving
+## 2. The Problems We Are Solving (The "Why")
 When AI agents or robots operate in the real world, they usually run into three major roadblocks:
-1. **The World Changes Unexpectly:** A robot navigating smoothly on grass suddenly hits soft sand. The old way of moving no longer works, and the system begins to slip or fail.
+1. **The World Changes Unexpectedly:** A robot navigating smoothly on grass suddenly hits soft sand. The old way of moving no longer works, and the system begins to slip or fail.
 2. **You Can't Just Use Math to Tweak Prompts:** The system's rules are a messy mix of English instructions (prompts), code logic, and numbers. You can't use standard calculus or gradient math to calculate how to fix a paragraph of text.
 3. **Over-Filtering and "Fear" (Fragility):** If an automated fixer tries to eliminate *every single tiny error*, the robot becomes too afraid to move. It over-corrects, gets stuck, and freezes up the second it encounters normal real-world friction.
 
-## 3. How the Core Workflow Works
+## 3. How the Core Workflow Works (Step-by-Step Explanations)
 This system runs a smart loop that isolates the live, busy robot or software from the heavy thinking required to rewrite code. This keeps costs down and keeps the live environment safe.
 
 ```mermaid
@@ -36,6 +36,34 @@ flowchart TD
 
     L -->|Apply Update: Safely Override the Old Rules| A
 ```
+
+### Step 1: Monitoring and Gathering Logs
+- **What is proposed:** The live environment continuously streams operations through a background sentinel layer. When an issue occurs, it snaps a picture of recent data logs and error streams.
+- **Why it is proposed:** Without an accurate record of the precise moment of failure, the engineering engine downstream would have to guess the context, which leads to massive token waste and generic, unhelpful policy updates.
+
+### Step 2: Formulating the Scoring System (Cost Function)
+- **What is proposed:** The engine builds a relative math formula that measures performance, balancing long-term task completion against minor immediate tracking friction.
+- **Why it is proposed:** If we don't explicitly teach the AI what a "good" change looks like versus a "catastrophic" change, it will optimize blindly, potentially fixing a minor error while destroying the overall system stability.
+
+### Step 3: Generating the First Generation of Brainstorm Ideas (Offspring Population)
+- **What is proposed:** The reasoning model writes out a collection of 10 to 20 code variations, modifying prompt text, routing parameters, and numerical weights.
+- **Why it is proposed:** Evolutionary strategies rely on population diversity. Creating a varied batch of ideas ensures that the engine tests multiple different angles to find the absolute best path out of a failure.
+
+### Step 4: Pass 1 — The Static Replay Filter (The First Sieve)
+- **What is proposed:** Before running live tests, every idea is played against a rigid recording of the historical logs that caused the original error.
+- **Why it is proposed:** Running full live container simulations for every wild, broken brainstorm idea is incredibly slow and expensive. This filter instantly discards code with basic syntax errors or obvious logical flaws for pennies, saving massive compute budgets.
+
+### Step 5: Pass 2 — The Isolated Sandbox Dynamic Playground (The Second Sieve)
+- **What is proposed:** The ideas that survive the static filter are deployed into temporary, isolated Docker containers where they interact with live simulated telemetry streams.
+- **Why it is proposed:** A script might look great on paper, but fail dynamically when processing time-sensitive information or continuous loops. The live playground proves whether an idea is resilient under realistic, changing conditions.
+
+### Step 6: Tracking Performance Progress & Checking for Plateaus
+- **What is proposed:** The algorithm charts the scores across generations. When the improvement curve flattens out, it calls a halt to brainstorming.
+- **Why it is proposed:** AI models can keep tweaking code forever trying to achieve an impossible 100% perfect score. Halting when progress flattens out ensures the system delivers a great, working update rapidly without burning infinite time and API tokens.
+
+### Step 7: Rule Override and Deployment
+- **What is proposed:** The highest-scoring update file ($\Delta RL$) is verified for security and pushed back to OpenClaw via configuration precedence keys.
+- **Why it is proposed:** This dynamically updates the system's operational logic on-the-fly without requiring a full manual reboot or human developer intervention.
 
 ## 4. The Core Components
 
