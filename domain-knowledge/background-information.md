@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-The goal of this project is to build a **multi‑agent, supervisor‑orchestrated software‑development factory** using the **OpenHands SDK**, running locally (e.g., inside VS Code) and backed by **OpenRouter** LLMs (such as Claude 3 Haiku and DeepSeek Coder).
+The goal of this project is to build a **multi‑agent, supervisor‑orchestrated software‑development factory** using the **OpenHands SDK**, running locally (e.g., inside VS Code) and backed by **OpenRouter** LLMs (such as Gemma 4 and DeepSeek Coder).
 
 This factory will automate the software‑development lifecycle from initial idea to deployment and cleanup, using a **phase‑based pipeline** and a **hierarchical agent architecture**. A top‑level **development‑manager** agent will coordinate a set of specialized phase agents, each responsible for a specific stage of the process and for producing well‑defined artifacts in the repository.
 
@@ -26,7 +26,7 @@ All long‑form artifacts (proposal, specifications, architecture, blueprints, p
    - Tracks and logs progress.
 3. Centralize all human‑readable artifacts in the **`docs/` directory** as Markdown files.
 4. Use **OpenRouter** as the LLM backend, with support for:
-   - Claude 3 Haiku (planning, analysis, architecture).
+   - Gemma 4 (planning, analysis, architecture).
    - DeepSeek Coder (code generation, refactoring, blueprinting).
 5. Provide a **template repository** that others can fork and use by simply supplying their own OpenRouter API key via GitHub Secrets.
 
@@ -185,7 +185,7 @@ The **QA agent** (Phase 8) is responsible for designing and/or generating these 
 
 The factory will use **OpenRouter** as the LLM provider. The primary models of interest are:
 
-- **Claude 3 Haiku**
+- **Gemma 4**
   - Use cases: planning, analysis, summarization, architecture, high‑level reasoning.
 - **DeepSeek Coder**
   - Use cases: code generation, refactoring, blueprinting, implementation details.
@@ -318,7 +318,7 @@ Building a custom agent with **OpenHands** and **OpenRouter** allows you to move
 ### Architecture Components
 
 * **Tier 1: The Orchestration SDK (OpenHands)**: Acts as the "Agent Core" that manages the event stream, translating goals into shell commands or file edits. You can define custom runtimes here to include your specialized physics libraries.
-* **Tier 2: The Model API (OpenRouter)**: Serves as the "Reasoning Engine". It uses **Claude 3 Haiku** for low-latency tasks and **DeepSeek Coder** for complex architectural logic.
+* **Tier 2: The Model API (OpenRouter)**: Serves as the "Reasoning Engine". It uses **Gemma 4** for low-latency tasks and **DeepSeek Coder** for complex architectural logic.
 * **Tier 3: The UI Extension (VS Code Chat Participant)**: The "Interaction Layer" that integrates with the vscode.chat.createChatParticipant API. It forwards prompts to the local OpenHands service and streams diffs back to your IDE.
 
 ### Integration Logic
@@ -343,7 +343,7 @@ graph TD
 
     subgraph "Inference Layer"
         D -->|API Request| F[OpenRouter Gateway]
-        F -->|Route| G[Claude 3 Haiku]
+        F -->|Route| G[Gemma 4]
         F -->|Route| H[DeepSeek Coder]
     end
 
@@ -432,7 +432,7 @@ This section records the authoritative intent for **Anvil** and should be treate
 ### Model Routing Strategy
 
 - Routing approach: **both fixed defaults per phase and user-configurable overrides**.
-- Initial core models: Claude 3 Haiku and DeepSeek Coder.
+- Initial core models: Gemma 4 and DeepSeek Coder.
 - System must be extensible to add additional low-cost models.
 - Candidate low-cost additions to keep available in routing config:
   - Google Gemini Flash family

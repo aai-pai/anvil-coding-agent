@@ -179,7 +179,7 @@ Phase dependencies are encoded in the DAG (see §8.6); the supervisor selects re
 - OpenRouter is the LLM provider abstraction.
 - Routing is **phase + task hybrid**: each phase declares a default model, and subtasks within a phase (for example: planning, code generation, debugging, review) may route to different models.
 - Initial model defaults:
-	- Claude 3 Haiku for planning, analysis, and architecture.
+	- Gemma 4 for planning, analysis, and architecture.
 	- DeepSeek Coder for coding-heavy generation and refactoring.
 - User-configurable overrides at both phase and subtask granularity, resolved through the configuration precedence hierarchy (§8.10).
 - Extensible routing configuration for additional low-cost models.
