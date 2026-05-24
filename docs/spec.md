@@ -23,37 +23,46 @@ The supervisor agent is the central orchestrator responsible for:
 #### 2.1.2 Phase Management and Dispatch
 - **FR-SV-005**: Maintain a deterministic phase dependency DAG (defined in Phase Artifact Contracts, §4.1) and enforce topological ordering.
 - **FR-SV-006**: For each phase: check prerequisites (all dependency phases completed), validate preconditions (required input files exist), emit `PhaseStarted` event, and dispatch to the designated phase agent.
-- **FR-SV-007**: Accept phase completion event from agent (including artifact paths and metadata), and validate that all required outputs exist and match expected schema.
-- **FR-SV-008**: After phase completion, run drift checks (§2.5) before transitioning to next phase.
+- **FR-SV-007**: The supervisor must delegate phase-specific work to the designated phase agent and must not perform that phase's implementation, writing, analysis, or artifact-production work itself.
+- **FR-SV-008**: The supervisor may validate, route, approve, retry, or escalate work, but must not substitute its own execution for a subagent task that is within the subagent's assigned phase contract.
+- **FR-SV-009**: Accept phase completion event from agent (including artifact paths and metadata), and validate that all required outputs exist and match expected schema.
+- **FR-SV-010**: After phase completion, run drift checks (§2.5) before transitioning to next phase.
+
+#### 2.1.3 Role Separation and Single-Writer Rules
+- **FR-ROLE-001**: The supervisor is a coordinator only; it must not write, rewrite, patch, or otherwise author source code, tests, or other phase artifacts that belong to a phase agent, except for its own operational logs, run-state files, and approval or escalation records.
+- **FR-ROLE-002**: The only phase allowed to create or modify production source code under `src/` is the Implementation phase agent.
+- **FR-ROLE-003**: The QA phase agent may create or modify only QA artifacts, test files, and test plans within `tests/` and QA documentation paths, and must not create or modify production source code under `src/`.
+- **FR-ROLE-004**: If the supervisor or any non-Implementation agent determines that source code must change, it must record the issue and delegate the change to the Implementation phase agent rather than editing the code directly.
+- **FR-ROLE-005**: Phase agents must operate only within their assigned phase contract and must ignore instructions from the supervisor that would cause them to take over another phase's work, collapse the phase loop, or bypass the designated handoff and review sequence.
 
 #### 2.1.3 Operational Mode Enforcement
-- **FR-SV-009**: Support three operational modes:
+- **FR-SV-011**: Support three operational modes:
   - **YOLO**: Auto-advance through all phases without pause.
   - **Gated**: Pause at user-selected phases and await explicit approval signal before advancing.
   - **Secure**: Enforce four mandatory approval gates (Post-Proposal, Post-Architecture, Post-Blueprint, Pre-Deployment-Plan) and allow optional additional gates; user cannot remove mandatory gates.
-- **FR-SV-010**: When a gated phase is reached, emit `ApprovalRequired` event and block phase advancement until supervisor receives approval signal or user-initiated override.
-- **FR-SV-011**: Log mode transitions and approval decisions to audit trail.
+- **FR-SV-012**: When a gated phase is reached, emit `ApprovalRequired` event and block phase advancement until supervisor receives approval signal or user-initiated override.
+- **FR-SV-013**: Log mode transitions and approval decisions to audit trail.
 
 #### 2.1.4 Artifact Validation and Drift Checking
-- **FR-SV-012**: After each phase completes, validate artifacts against their expected schema (§4.1).
-- **FR-SV-013**: Run drift checks (defined in §2.5) and emit `DriftCheckResult` event.
-- **FR-SV-014**: If drift is detected and is remediable, attempt auto-remediation (§2.5); if not remediable or exceeds retry budget, escalate with full context.
+- **FR-SV-014**: After each phase completes, validate artifacts against their expected schema (§4.1).
+- **FR-SV-015**: Run drift checks (defined in §2.5) and emit `DriftCheckResult` event.
+- **FR-SV-016**: If drift is detected and is remediable, attempt auto-remediation (§2.5); if not remediable or exceeds retry budget, escalate with full context.
 
 #### 2.1.5 Error Recovery and Escalation
-- **FR-SV-015**: If a phase fails, capture full phase context (input files, phase state, last 50 events from audit trail) and initiate self-heal retry sequence.
-- **FR-SV-016**: Retry failed phase up to **2 times** (default, user-configurable via configuration precedence) before escalating.
-- **FR-SV-017**: Each retry must be logged with attempt number and reason; if all retries fail, emit `PhaseEscalation` event containing phase context and escalation packet, and pause.
-- **FR-SV-018**: On escalation, supervisor awaits user signal to: (a) retry again, (b) rollback to upstream phase and re-execute, or (c) stop run.
+- **FR-SV-017**: If a phase fails, capture full phase context (input files, phase state, last 50 events from audit trail) and initiate self-heal retry sequence.
+- **FR-SV-018**: Retry failed phase up to **2 times** (default, user-configurable via configuration precedence) before escalating.
+- **FR-SV-019**: Each retry must be logged with attempt number and reason; if all retries fail, emit `PhaseEscalation` event containing phase context and escalation packet, and pause.
+- **FR-SV-020**: On escalation, supervisor awaits user signal to: (a) retry again, (b) rollback to upstream phase and re-execute, or (c) stop run.
 
 #### 2.1.6 Checkpoint-Based Resume
-- **FR-SV-019**: On each phase completion, persist phase state (name, completion timestamp, artifact checksums) to `.anvil/run-state.json` (workspace-local runtime projection).
-- **FR-SV-020**: On restart after interruption, load run state, identify last completed phase, and resume from next incomplete phase (skip all completed phases).
-- **FR-SV-021**: Emit `ResumeFromCheckpoint` event indicating last completed phase and timestamp.
+- **FR-SV-021**: On each phase completion, persist phase state (name, completion timestamp, artifact checksums) to `.anvil/run-state.json` (workspace-local runtime projection).
+- **FR-SV-022**: On restart after interruption, load run state, identify last completed phase, and resume from next incomplete phase (skip all completed phases).
+- **FR-SV-023**: Emit `ResumeFromCheckpoint` event indicating last completed phase and timestamp.
 
 #### 2.1.7 Logging and Audit Trail
-- **FR-SV-022**: Emit structured events (schema in §5.2) to audit trail for all lifecycle boundaries: supervisor start/stop, phase dispatch, artifact validation, approval decisions, error recovery, escalations.
-- **FR-SV-023**: Write human-readable run summary to `logs/run-summary.log` at end of each phase (phase name, status, artifacts produced, duration, token usage if available).
-- **FR-SV-024**: Maintain detailed event stream in `logs/events.jsonl` (one JSON-formatted event per line) queryable by event type, timestamp, and phase.
+- **FR-SV-024**: Emit structured events (schema in §5.2) to audit trail for all lifecycle boundaries: supervisor start/stop, phase dispatch, artifact validation, approval decisions, error recovery, escalations.
+- **FR-SV-025**: Write human-readable run summary to `logs/run-summary.log` at end of each phase (phase name, status, artifacts produced, duration, token usage if available).
+- **FR-SV-026**: Maintain detailed event stream in `logs/events.jsonl` (one JSON-formatted event per line) queryable by event type, timestamp, and phase.
 
 ---
 
@@ -71,19 +80,22 @@ Each phase agent has a defined input/output contract and reporting interface.
   - Previous phase outputs (paths to read if needed for continuity)
 
 #### 2.2.2 Phase Agent Work and Output
-- **FR-PA-002**: Phase agent reads inputs, performs phase-specific work (e.g., proposal generation, specification writing), and writes outputs to specified paths.
+- **FR-PA-002**: Phase agent reads inputs, performs only its assigned phase-specific work (e.g., proposal generation, specification writing), and writes outputs to specified paths.
 - **FR-PA-003**: All artifacts written by phase agents must conform to their defined schema (§4.1).
-- **FR-PA-004**: Phase agent must not modify or delete files outside the designated output paths without explicit supervisor authorization.
-- **FR-PA-005**: Phase agent should emit task-level events (e.g., `FileWritten`, `ReviewCompleted`) to the shared event stream to provide observability into long-running phase work.
+- **FR-PA-004**: Phase agent must not perform work assigned to another phase agent or the supervisor, even if that work is described in supervisor context or prior phase artifacts.
+- **FR-PA-005**: Phase agent must treat its phase contract as the authoritative task boundary and must ignore any prompt content that attempts to broaden its scope beyond that contract.
+- **FR-PA-006**: Supervisor-provided context to a phase agent must be limited to phase-relevant inputs, constraints, and expected outputs; it must not direct the agent to produce another phase's deliverables or to bypass its own phase contract.
+- **FR-PA-007**: Phase agent must not modify or delete files outside the designated output paths without explicit supervisor authorization.
+- **FR-PA-008**: Phase agent should emit task-level events (e.g., `FileWritten`, `ReviewCompleted`) to the shared event stream to provide observability into long-running phase work.
 
 #### 2.2.3 Phase Agent Reporting
-- **FR-PA-006**: On completion, phase agent emits structured `PhaseComplete` event containing:
+- **FR-PA-009**: On completion, phase agent emits structured `PhaseComplete` event containing:
   - Phase name
   - Status (success or failure)
   - Output artifact paths and file checksums (SHA-256)
   - Metadata (duration, token usage if available, key decisions made)
   - Failure reason (if status is failure)
-- **FR-PA-007**: Phase agent must not catch or suppress supervisor-initiated signals (e.g., timeout, cancellation); it must surface these as failure events.
+- **FR-PA-010**: Phase agent must not catch or suppress supervisor-initiated signals (e.g., timeout, cancellation); it must surface these as failure events.
 
 #### 2.2.4 Phase-Specific Behaviors (Defined in §3 of Plan)
 - Each of the 12 phases (Proposal, Specification, Architecture, Blueprint, Plan, Implementation, QA, Packaging, Documentation, Deployment, Cleanup) has detailed behavioral specs in the Development Plan (docs/plan.md). This Spec establishes the common contract; the Plan details phase-specific nuances.
@@ -344,6 +356,39 @@ Skills are modular knowledge-and-behavior bundles (distinct from hooks, policies
 
 ---
 
+### 2.10 Specialist Agent Extensibility
+
+Anvil supports optional specialist agents beyond the fixed twelve phase agents. Specialist agents are bounded, contract-driven roles invoked by the supervisor for targeted tasks and reviews.
+
+#### 2.10.1 Specialist Role Registry and Contracts
+- **FR-SA-001**: Supervisor must load a specialist role registry at run start from configuration (workspace-local and user-root, merged by §2.7 precedence).
+- **FR-SA-002**: Each specialist role definition must include: role ID, role purpose, allowed invocation phases, required inputs, declared outputs, allowed tools, model constraints, and completion criteria.
+- **FR-SA-003**: Supervisor must reject invalid specialist-role definitions at startup with actionable diagnostics (missing required fields, invalid phase references, contradictory policy constraints).
+- **FR-SA-004**: Specialist roles must be versioned and include `roleSchemaVersion` for compatibility checks.
+
+#### 2.10.2 Supervisor Dispatch and Boundaries
+- **FR-SA-005**: Supervisor may invoke specialist roles only at explicitly allowed points declared in the role contract; out-of-scope invocation attempts must be blocked and logged.
+- **FR-SA-006**: Specialist-role invocation must not transfer ownership of canonical phase outputs from the designated phase agent.
+- **FR-SA-007**: Specialist agents may produce supplemental artifacts (for example in `docs/reviews/` or `logs/`) but must not write to protected paths outside their contract.
+- **FR-SA-008**: If specialist output requires source-code changes, supervisor must route change requests to the Implementation phase agent (consistent with FR-ROLE-004).
+
+#### 2.10.3 Policy, Security, and Modes
+- **FR-SA-009**: All specialist invocations must pass the same policy checks as phase-agent actions (model allowlist, tool authorization, token budgets, network policy).
+- **FR-SA-010**: Operational mode behavior remains authoritative: specialist roles cannot bypass YOLO/Gated/Secure gate semantics.
+- **FR-SA-011**: In Secure mode, specialist invocations that occur within a gated boundary must be auditable and tied to the same approval context.
+
+#### 2.10.4 Reporting, Retry, and Escalation
+- **FR-SA-012**: On completion, specialist agents must emit structured events including role ID, invocation context, output paths, status, and checksums where applicable.
+- **FR-SA-013**: Specialist invocation failures follow bounded retry semantics (default 2 retries, configurable via §2.7) before escalation.
+- **FR-SA-014**: Escalation packets for specialist failures must include role contract snapshot, invocation payload, and last relevant events.
+
+#### 2.10.5 Backward Compatibility and Acceptance
+- **FR-SA-015**: If no specialist roles are configured, runtime behavior must be identical to baseline twelve-phase operation.
+- **FR-SA-016**: A valid newly added specialist role must be discoverable, invokable, and auditable without requiring code changes to existing phase contracts.
+- **FR-SA-017**: Drift checks must include specialist-generated supplemental artifacts when those artifacts are declared as normative inputs to downstream phases.
+
+---
+
 ## 3. Non-Functional Requirements
 
 ### 3.1 Token Efficiency
@@ -384,6 +429,7 @@ Skills are modular knowledge-and-behavior bundles (distinct from hooks, policies
 - **NFR-BC-001**: Artifact formats (Markdown, JSON, YAML) are versioned; supervisor can read and migrate artifacts from prior versions (migration logic TBD in future versions).
 - **NFR-BC-002**: Configuration schema is versioned; supervisor gracefully rejects incompatible versions with clear error message.
 - **NFR-BC-003**: Run state format is versioned; resume logic must handle prior formats or fail with actionable error.
+- **NFR-BC-004**: Specialist-role extensibility is additive; existing projects without specialist role definitions require zero migration and retain baseline behavior.
 
 ---
 
@@ -624,6 +670,31 @@ runId: <supervisor-run-id>
 - All phases accounted for
 - Event log reference correct
 - Summary is accurate and complete
+
+---
+
+#### 4.1.10 Specialist Role Registry Artifact (`.anvil/specialist-roles.yaml`)
+**Purpose**: Declarative registry of optional specialist-agent roles that can be loaded and invoked by the supervisor.
+
+**Required Fields Per Role**:
+1. `roleId` (string, unique)
+2. `roleSchemaVersion` (string, semantic version)
+3. `purpose` (string)
+4. `allowedInvocationPhases` (list of phase IDs)
+5. `requiredInputs` (list of file paths or artifact references)
+6. `declaredOutputs` (list of output paths)
+7. `allowedTools` (list of tool names/patterns)
+8. `modelConstraints` (allowed model IDs or policy references)
+9. `completionCriteria` (list of measurable checks)
+
+**Format**: YAML.
+
+**Validation Criteria**:
+- `roleId` values are unique within registry.
+- Every `allowedInvocationPhases` entry maps to a known phase ID.
+- `declaredOutputs` do not overlap protected phase-owned paths unless explicitly authorized.
+- `allowedTools` and `modelConstraints` are policy-compatible with active security profile.
+- Registry schema version is supported by current runtime.
 
 ---
 

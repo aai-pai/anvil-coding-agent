@@ -83,6 +83,19 @@ Each phase has a dedicated agent with:
 
 Each phase agent reports back to the development‑manager when its work is complete.
 
+### Specialist Role Expansion
+
+Beyond the fixed phase agents, the factory should support adding new specialist agents over time (for example: security-review specialist, performance specialist, migration specialist, compliance specialist, or API-design specialist).
+
+Specialist-role expansion must follow these principles:
+
+- Role contracts remain explicit and bounded (inputs, outputs, allowed tools, completion criteria).
+- The development-manager remains the single orchestrator and decides when specialists are invoked.
+- Specialist roles cannot bypass phase gates, policy enforcement, or drift checks.
+- Existing twelve-phase behavior remains valid when no extra specialist roles are configured.
+
+This extensibility is intended to let teams evolve the factory without rewriting its core orchestration model.
+
 ---
 
 ## Software‑Development Phases
