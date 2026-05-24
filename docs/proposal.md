@@ -67,6 +67,7 @@ Strategic direction after v0.1.0: use Anvil to build additional Anvil capabiliti
 - Docker-required-by-default execution isolation.
 - Model routing defaults plus user overrides.
 - Generated-code target languages: Python, Rust, C.
+- Extensible specialist-agent role registry so teams can add bounded non-phase specialists without altering the core twelve-phase contracts.
 
 ### Out of Scope
 
@@ -98,6 +99,20 @@ Each phase agent has:
 - Defined output files/artifacts.
 - Allowed tools and behaviors.
 - Clear completion criteria reported to supervisor.
+
+### 8.2A Specialist Roles (Extensible)
+
+In addition to fixed phase agents, Anvil supports optional specialist roles that can be introduced as bounded contributors (for example: security review, performance analysis, migration planning, compliance checks, API design review).
+
+Specialist roles are governed by explicit contracts and do not replace the canonical phase-agent ownership model. They are invoked by the development-manager only when configured and when their role contract applies.
+
+Specialist roles must:
+
+- Declare explicit input and output contracts.
+- Declare allowed tools and model constraints.
+- Emit structured completion/failure events compatible with supervisor auditing.
+- Respect all operational mode gates, policy checks, and drift controls.
+- Preserve backward compatibility: when no specialist roles are configured, baseline twelve-phase behavior is unchanged.
 
 ### 8.3 Artifact-First Workflow
 
