@@ -159,21 +159,24 @@ All artifacts are stored in the repository and indexed in a central artifact man
 
 ### 2.5 Drift Detection and Remediation
 
-**Drift** occurs when generated code or artifacts diverge from the controlling specification/blueprint, or when requirements are missing from the implementation.
+**Drift** occurs when generated code or artifacts diverge from the controlling Blueprint, Architecture, or Specification, or when requirements are missing from the implementation.
 
 #### 2.5.1 Drift Definition
 - **FR-DR-001**: Drift is detected in the following scenarios:
-  1. A feature or module is implemented in code but is not mentioned in the Blueprint or Spec.
-  2. A component or interface is defined in Blueprint/Spec but is missing or incomplete in code.
-  3. A non-functional requirement (e.g., performance target, security constraint) is defined in Spec but not verified/enforced in code.
-  4. Naming, structure, or module boundaries in code do not align with Blueprint definitions.
+  1. A feature or module is implemented in code but is not mentioned in the Blueprint, Architecture, or Spec.
+  2. A component or interface is defined in Blueprint/Architecture/Spec but is missing or incomplete in code.
+  3. A non-functional requirement (e.g., performance target, security constraint) is defined in Architecture or Spec but not verified/enforced in code.
+  4. Naming, structure, or module boundaries in code do not align with Blueprint or Architecture definitions.
   5. Test coverage is below the threshold defined in the QA Test Plan.
 
 #### 2.5.2 Drift Detection Mechanism
 - **FR-DR-002**: After Implementation phase completes, run automated drift checks:
   - Compare code modules/classes against Blueprint definitions.
+  - Compare code components, interfaces, and boundaries against Architecture definitions.
+  - Compare implemented features and constraints against Spec requirements.
   - Compare test coverage against QA Test Plan targets.
-  - Scan code for features not mentioned in Spec.
+  - Scan code for features not mentioned in Blueprint, Architecture, or Spec.
+- **FR-DR-002A**: Drift checks must run in this order, reflecting artifact creation order: Blueprint -> Architecture -> Spec.
 - **FR-DR-003**: Drift checks must complete in ≤ 60 seconds per phase; if timeout, report inconclusive result.
 - **FR-DR-004**: Emit `DriftCheckResult` event listing any detected drift with severity (critical, major, minor) and remediation suggestions.
 
