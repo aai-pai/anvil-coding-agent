@@ -5,6 +5,10 @@ derivedFrom:
   - docs/proposal.md
   - docs/spec.md
   - domain-knowledge/background-information.md
+inputHashes:
+    docs/proposal.md: 1aa139f744458770f2ce8be24e10d9eb1aafb9e941cb27425a3bbcfc99a75bb9
+    docs/spec.md: b5b485a99e5233d30c2ded6ded515a9e3a907db4cac8c5f9506284331c0ebe83
+    domain-knowledge/background-information.md: 3091f31fb045c3447898da081c7aa0bb7bb5f1c58f62c40f2b0884bd8a7c3bd2
 generatedAt: 2026-05-24T17:00:00Z
 runId: manual-draft-2026-05-24
 ---
@@ -62,15 +66,15 @@ Components are grouped into seven logical layers. Each component lists its respo
 
 **Responsibility.** A localhost FastAPI service that exposes versioned endpoints for run control, phase state, artifacts, events, and health. It is the integration boundary between the VS Code extension (and any future programmatic caller) and the in-process Development Manager. Streams events back to clients via Server-Sent Events.
 
-**Owns.** Proposal §3 (localhost REST API), proposal §6 in-scope item (programmatic users), spec §2.1.7 (event stream exposure).
+**Owns.** Proposal §3 (localhost REST API), proposal §6 in-scope item (programmatic users), spec §2.1.7 (event stream exposure), spec §4.2.3 (run-control signal schemas).
 
 **Depends on.** Development Manager (§3.2.1), Event Bus (§3.5.1), Checkpoint Store (§3.5.2).
 
 **Interfaces.**
 - `POST /v1/runs` — start a run (mode, profile, overrides).
 - `GET /v1/runs/{id}` — run state and current phase.
-- `POST /v1/runs/{id}/approve` — supply approval at a gated checkpoint.
-- `POST /v1/runs/{id}/override` — phase rollback / force-advance.
+- `POST /v1/runs/{id}/approve` — supply approval payload `{gateId, gateName, approved, comments?, requesterId}`; Secure-mode gates require explicit `approved: true` for the named checkpoint.
+- `POST /v1/runs/{id}/override` — request `{action: force-advance|rollback|stop, targetPhase?, reason, comments?, requesterId}`; `targetPhase` is required for rollback.
 - `GET /v1/runs/{id}/events` — SSE stream of audit events.
 - `GET /v1/artifacts/{phase}` — artifact metadata + content.
 - `GET /v1/health` — readiness/liveness with diagnostic summary.
@@ -79,22 +83,23 @@ Components are grouped into seven logical layers. Each component lists its respo
 
 #### 3.2.1 Development Manager (Supervisor)
 
-**Responsibility.** The central orchestrator. Loads effective configuration, validates runtime prerequisites, maintains the phase DAG, dispatches phase agents in topological order, enforces operational mode gates (YOLO/Gated/Secure), runs validation and drift checks at phase boundaries, manages retry and escalation budgets, and persists checkpoints. It is a coordinator only — it never authors phase artifacts (FR-ROLE-001).
+**Responsibility.** The central orchestrator. Loads effective configuration, validates runtime prerequisites, maintains the phase DAG and logical artifact registry, dispatches phase agents in topological order, enforces operational mode gates (YOLO/Gated/Secure), runs validation and drift checks at phase boundaries, manages retry/remediation/escalation budgets, performs rollback by marking downstream outputs stale and invalidating checkpoints, validates checkpoint artifacts before resume, and persists checkpoints. It is a coordinator only — it never authors phase artifacts (FR-ROLE-001).
 
-**Owns.** Spec FR-SV-001 through FR-SV-026; FR-OM-001 through FR-OM-014; §2.1.5 retry/escalation; §2.1.6 checkpoint resume; §2.1.7 audit trail emission.
+**Owns.** Spec FR-SV-001 through FR-SV-026; FR-OM-001 through FR-OM-014, FR-OM-008A; §2.1.5 retry/escalation; §2.1.6 checkpoint resume; §2.1.7 audit trail emission.
 
 **Depends on.** Configuration Resolver (§3.3.1), Runtime Projection Layer (§3.3.2), Phase Agent Framework (§3.2.2), Specialist Role Registry (§3.2.3), Policy Engine (§3.4.1), Hook Layer (§3.4.2), Artifact Validator (§3.4.3), Drift Checker (§3.4.4), Event Bus (§3.5.1), Checkpoint Store (§3.5.2).
 
 **Interfaces.**
 - `start_run(config) → RunId` — begin a new run.
 - `dispatch_phase(phase_id) → PhaseResult` — invoke a phase agent.
-- `await_approval(gate_id) → ApprovalSignal` — block on a gated phase.
+- `await_approval(gate_id, gate_name) → ApprovalSignal` — block on a gated phase.
+- `rollback(target_phase, reason) → RollbackPlan` — mark downstream phases stale and clear their checkpoint entries.
 - `escalate(packet) → UserDecision` — pause and surface an escalation.
-- `resume(run_id) → RunState` — restart from last checkpoint.
+- `resume(run_id) → ResumePlan` — restart from the earliest phase whose checkpoint and artifacts remain valid.
 
 #### 3.2.2 Phase Agent Framework
 
-**Responsibility.** A common runtime that hosts the twelve phase agents (proposal, factory_init, specification, architecture, blueprint, dev_plan, implementation, qa, packaging, documentation, deployment, cleanup). Each agent is a configured instance with a declarative contract (inputs, outputs, allowed tools, model constraints, completion criteria). The framework enforces single-writer rules, surfaces task-level events, and emits structured `PhaseComplete` payloads with artifact checksums.
+**Responsibility.** A common runtime that hosts the twelve phase agents (proposal, factory_init, specification, architecture, blueprint, dev_plan, implementation, qa, packaging, documentation, deployment, cleanup). Each agent is a configured instance with a declarative contract (phase name, inputs, input schemas, outputs, phase context, previous phase outputs, allowed tools, model constraints, completion criteria). The framework enforces single-writer rules through a path-ownership map derived from the artifact contracts, mediates writes during agent execution, performs post-run diff validation, surfaces task-level events, and propagates supervisor timeouts/cancellations as unsuppressed phase failures.
 
 **Owns.** Spec FR-PA-001 through FR-PA-010; proposal §9 (twelve-phase pipeline); per-artifact schemas in spec §4.1.
 
@@ -102,45 +107,49 @@ Components are grouped into seven logical layers. Each component lists its respo
 
 **Interfaces.**
 - `invoke(contract, payload) → PhaseResult`
+- `authorize_write(phase_id, path) → Allow | Deny` — enforce contract-owned output paths.
 - `emit_event(event)` — task-level observability (`FileWritten`, `ReviewCompleted`, etc.).
-- Contract schema: `{phase_id, inputs[], outputs[], allowed_tools[], model_constraints, completion_criteria[]}`.
+- `propagate_signal(signal) → void` — forward timeout/cancel signals without suppression.
+- Contract schema: `{phase_id, phase_name, inputs[], input_schemas[], outputs[], phase_context, previous_phase_outputs[], allowed_tools[], model_constraints, completion_criteria[]}`.
 
 #### 3.2.3 Specialist Role Registry
 
-**Responsibility.** Loads and validates the optional specialist role registry (`.anvil/specialist-roles.yaml`) at run start. Provides the Development Manager with role definitions for bounded non-phase contributors (security review, performance analysis, etc.). Enforces that specialist invocations cannot transfer ownership of canonical phase outputs and must pass the same policy gates as phase agents.
+**Responsibility.** Loads and merges the optional specialist role registries from `~/.anvil/specialist-roles.yaml` and `.anvil/specialist-roles.yaml` at run start, keyed by `roleId` with workspace-local definitions taking precedence. Provides the Development Manager with role definitions for bounded non-phase contributors (security review, performance analysis, etc.). Validates `roleSchemaVersion`, allowed invocation phases, protected-path boundaries, and policy compatibility, and ensures specialist invocations remain tied to the current phase and approval context.
 
 **Owns.** Spec FR-SA-001 through FR-SA-017; spec §4.1.10 (registry artifact).
 
 **Depends on.** Configuration Resolver (§3.3.1), Policy Engine (§3.4.1), Event Bus (§3.5.1).
 
 **Interfaces.**
-- `load_registry() → SpecialistRole[]`
-- `validate(role_def) → ValidationResult`
+- `load_registry(user_path, workspace_path) → EffectiveRegistry`
+- `validate(role_def, protected_paths) → ValidationResult`
+- `effective_registry() → SpecialistRole[]`
 - `invoke(role_id, context) → SpecialistResult`
 
 ### 3.3 Configuration and Runtime
 
 #### 3.3.1 Configuration Resolver
 
-**Responsibility.** Resolves the effective runtime configuration once per run by merging four precedence levels: run-time flags > workspace-local (`.anvil/config.yaml`) > user-root (`~/.anvil/config.yaml`) > extension built-ins. Applies the documented merge semantics: scalars override, lists union, maps deep-merge. Validates the merged schema against the current `configVersion` and logs the effective configuration to the audit trail.
+**Responsibility.** Resolves the effective runtime configuration once per run by merging four precedence levels: run-time flags > workspace-local (`.anvil/config.yaml`) > user-root (`~/.anvil/config.yaml`) > extension built-ins. Applies the documented merge semantics: scalars override, lists union, maps deep-merge. Validates the merged schema against the current `configVersion`, resolves phase/subtask model-routing overrides, reports syntax/version errors with file-and-line diagnostics, and logs the effective configuration to the audit trail.
 
-**Owns.** Spec FR-CF-001 through FR-CF-007; §7 (configuration management); proposal §8.10.
+**Owns.** Spec FR-CF-001 through FR-CF-007, FR-ML-005; §7 (configuration management); proposal §8.10.
 
 **Depends on.** Secret Storage Adapter (§3.3.3) for resolving secret references.
 
 **Interfaces.**
 - `resolve(invocation_flags) → EffectiveConfig`
-- `validate(config) → ValidationResult`
+- `validate(config) → ValidationResult` — includes file/line diagnostics for syntax or version failures.
 - `snapshot(config) → JSON` — for the audit trail.
 
 #### 3.3.2 Runtime Projection Layer
 
-**Responsibility.** At run start, materializes user-root intent (`~/.anvil/`) and workspace overrides into a workspace-local runtime projection. Writes:
+**Responsibility.** At run start, materializes user-root intent (`~/.anvil/`) and workspace overrides into a workspace-local runtime projection. Compiles canonical hooks, snapshots merged policy and MCP configuration, initializes run-state, and ensures audit outputs exist under `logs/`. Workspace-local `.anvil/skills/` and `.anvil/specialist-roles.yaml` remain source overrides rather than being relocated. Writes:
 - `.openhands/hooks.json` — OpenHands-compatible compiled hook config.
 - `.openhands/runtime/mcp.generated.json` — resolved MCP server config.
 - `.openhands/runtime/policy-snapshot.json` — effective merged policy.
-- `.agents/skills/` — workspace skill overlays.
 - `.anvil/run-state.json` — checkpoint store (initialized; written to by §3.5.2).
+- `logs/events.jsonl` — structured audit trail.
+- `logs/run-summary.log` — human-readable per-phase summaries.
 
 This makes runs reproducible: the entire effective configuration is committed to a known set of files before any agent work begins.
 
@@ -168,46 +177,55 @@ This makes runs reproducible: the entire effective configuration is committed to
 
 #### 3.4.1 Policy Engine
 
-**Responsibility.** Loads policy files from `~/.anvil/policies/` and `.anvil/policies/`, merges them through the same precedence model as configuration, and evaluates policy checks at runtime. Built-in policies include `AllowedModels`, `TokenBudgetPerPhase`, `MaxRetriesPerPhase`, `MCPToolWhitelist`/`Blacklist`, `SecretRedactionRules`, `NetworkAccessPolicy`, and `RequiredApprovalGates`. Policy decisions are remediable or non-remediable per policy definition; the engine routes remediable violations through the remediation strategies in spec §2.6.4 before allowing escalation.
+**Responsibility.** Loads policy files from `~/.anvil/policies/` and `.anvil/policies/`, merges them through the same precedence model as configuration, validates `policyVersion`, applies the default `remediable=false` rule when omitted, and evaluates policy checks at runtime. Built-in policies include `AllowedModels`, `TokenBudgetPerPhase`, `MaxRetriesPerPhase`, `MCPToolWhitelist`/`Blacklist`, `SecretRedactionRules`, `NetworkAccessPolicy`, and `RequiredApprovalGates`. Policy decisions are remediable or non-remediable per policy definition; the engine routes remediable violations through the configured `remediationStrategy`, consumes model-route and token-usage events for budget enforcement, and emits file-and-line diagnostics for invalid policy files.
 
-**Owns.** Spec FR-PL-001 through FR-PL-008; §4.3 policy file schema; §2.6.2 core policies.
+**Owns.** Spec FR-PL-001 through FR-PL-008, FR-PL-003A; §4.3 policy file schema; §2.6.2 core policies.
 
 **Depends on.** Configuration Resolver (§3.3.1), Event Bus (§3.5.1).
 
 **Interfaces.**
+- `load() → PolicyBundle`
 - `check(action_context) → AllowDecision | DenyDecision | RemediationRequest`
+- `record_usage(phase, subtask, usage) → BudgetDecision`
 - `enforce(decision) → EnforcementResult`
 - `list_policies() → Policy[]`
 
 #### 3.4.2 Hook Layer
 
-**Responsibility.** Executes lifecycle-boundary interceptors compiled into `.openhands/hooks.json`. Supports the OpenHands-native typed events (`PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `SessionStart`, `SessionEnd`, `Stop`) with the standard blocking contract (exit code 2 = block). Hooks call into the Policy Engine for allow/deny decisions and emit hook-execution events for audit. Anvil's source-of-truth hook definitions live under `~/.anvil/hooks/` and are merged with workspace overrides during runtime projection.
+**Responsibility.** Executes canonical lifecycle-boundary interceptors and compiles them into `.openhands/hooks.json`. The public contract covers `BeforeToolInvocation`, `AfterToolInvocation`, `BeforePromptSubmission`, `AfterPromptResponse`, `PhaseStart`, `PhaseComplete`, `BeforeApprovalDecision`, `AfterApprovalDecision`, `BeforeRetry`, and `BeforeEscalation`. OpenHands-native callbacks are one execution target; supervisor-managed adapters cover hook points that are not natively exposed by OpenHands while preserving the same allow/deny/mutate semantics and audit logging behavior.
 
-**Owns.** Proposal §8.8; background §544–562; spec §5.1.
+**Owns.** Proposal §8.8; background §544–562; spec §4.2.2, §5.1.
 
-**Depends on.** Policy Engine (§3.4.1), Event Bus (§3.5.1), OpenHands SDK Adapter (§3.7.2).
+**Depends on.** Policy Engine (§3.4.1), Event Bus (§3.5.1).
 
 **Interfaces.**
-- `pre_tool_use(tool, args) → Allow | Deny | Mutate`
-- `post_tool_use(tool, result, duration) → void`
-- `user_prompt_submit(prompt, model) → Allow | Deny | Mutate`
-- `stop(phase, artifacts) → Allow | Block`
+- `compile(definitions) → HookManifest`
+- `before_tool_invocation(tool, args) → Allow | Deny | Mutate`
+- `after_tool_invocation(tool, result, duration) → void`
+- `before_prompt_submission(prompt, model) → Allow | Deny | Mutate`
+- `after_prompt_response(prompt, response, usage) → void`
+- `phase_start(phase) → void`
+- `phase_complete(phase, artifacts) → void`
+- `before_approval_decision(gate, context) → Allow | Deny | Mutate`
+- `after_approval_decision(gate, decision) → void`
+- `before_retry(context) → Allow | Deny | Mutate`
+- `before_escalation(packet) → Allow | Deny | Mutate`
 
 #### 3.4.3 Artifact Validator
 
-**Responsibility.** After a phase agent reports completion, validates produced artifacts against their declared schema (spec §4.1). Checks include: required sections present, minimum content thresholds (e.g., spec ≥ 10 FRs; architecture ≥ 8 components), front-matter well-formed, Markdown syntactically valid. Validation is deterministic pass/fail (no warnings). Times out at 30 seconds per artifact (NFR-LT-004).
+**Responsibility.** After a phase agent reports completion, validates produced artifacts against their declared schema (spec §4.1). Checks include: required sections present, minimum content thresholds (e.g., spec ≥ 10 FRs; architecture ≥ 8 components), front-matter well-formed, required input hashes present, artifact/version identifiers compatible with the current runtime, and Markdown syntactically valid. Validation is deterministic pass/fail (no warnings), version-aware (dispatches compatibility validators for prior artifact formats or emits actionable rejection), and returns section/line diagnostics. On failure, it produces a structured validation error report that the Development Manager feeds back into the owning phase agent as retry context. Times out at 30 seconds per artifact (NFR-LT-004).
 
-**Owns.** Spec FR-AR-001 through FR-AR-006; per-artifact validation criteria in §4.1.
+**Owns.** Spec FR-AR-001 through FR-AR-008; per-artifact validation criteria in §4.1.
 
 **Depends on.** Event Bus (§3.5.1).
 
 **Interfaces.**
 - `validate(phase, artifact_paths) → ValidationResult`
-- `schema(phase) → ArtifactSchema`
+- `schema(phase, artifact_version?) → ArtifactSchema`
 
 #### 3.4.4 Drift Checker
 
-**Responsibility.** After implementation and at every artifact boundary, compares downstream artifacts against upstream controlling artifacts in the required order: **Blueprint → Architecture → Spec** (FR-DR-002A). Detects five drift categories (spec §2.5.1): code features absent from blueprint/architecture/spec; missing/incomplete components; unverified non-functional requirements; naming and boundary violations; test coverage gaps. Categorizes drift as minor/major/critical and routes through the appropriate remediation path: minor → phase agent re-invocation, major → upstream phase rollback, critical → escalation.
+**Responsibility.** After implementation and at every artifact boundary, compares downstream artifacts against upstream controlling artifacts in the required order: **Blueprint → Architecture → Spec** (FR-DR-002A). Detects five drift categories (spec §2.5.1): code features absent from blueprint/architecture/spec; missing/incomplete components; unverified non-functional requirements; naming and boundary violations; test coverage gaps. To evaluate coverage drift, it loads QA Test Plan targets and coverage reports into a normalized coverage snapshot. It also includes specialist-generated supplemental artifacts when they are declared normative inputs to downstream phases. Categorizes drift as minor/major/critical and routes through the appropriate remediation path: minor → phase agent re-invocation or explicitly logged tolerated drift, major → upstream phase rollback with stale marking, critical → escalation. Honors user-acknowledged drift overrides from effective configuration and records them through the Event Bus.
 
 **Owns.** Spec FR-DR-001 through FR-DR-010.
 
@@ -215,13 +233,15 @@ This makes runs reproducible: the entire effective configuration is committed to
 
 **Interfaces.**
 - `check(phase, code_or_artifact) → DriftReport`
+- `collect_coverage(qa_plan, coverage_reports) → CoverageSnapshot`
 - `remediate(drift_report) → RemediationResult`
+- `accept(drift_id, override) → AcceptedDrift`
 
 ### 3.5 Observability and State
 
 #### 3.5.1 Event Bus / Audit Trail
 
-**Responsibility.** Single structured event stream for all supervisor actions, hook executions, phase lifecycle transitions, and token/cost telemetry. Emits to `.anvil/events.jsonl` (one JSON event per line; monotonically increasing timestamps). Applies secret redaction (via §3.3.3) before write. Indexed by event type, timestamp, phase, severity, and run ID for queryability. Also surfaces over Server-Sent Events through the Anvil Runtime API.
+**Responsibility.** Single structured event stream and summary-log writer for all supervisor actions, hook executions, phase lifecycle transitions, approval/override decisions, artifact version records, and token/cost telemetry. Emits machine-readable events to `logs/events.jsonl` (one JSON event per line; monotonically increasing timestamps) and human-readable phase summaries to `logs/run-summary.log`. Applies secret redaction (via §3.3.3) before write. Indexed by event type, timestamp, phase, severity, run ID, and artifact ID for queryability. Also surfaces over Server-Sent Events through the Anvil Runtime API and prepares retention references consumed by the Cleanup/final-commit workflow.
 
 **Owns.** Spec §4.2.1 event schema; NFR-OB-001 through NFR-OB-005; spec §5 hooks-and-events lifecycle.
 
@@ -229,20 +249,24 @@ This makes runs reproducible: the entire effective configuration is committed to
 
 **Interfaces.**
 - `emit(event)` — append to stream.
+- `write_phase_summary(summary) → void`
+- `record_artifact_version(metadata) → void`
 - `query(filter) → Event[]` — by phase, type, severity, timeframe.
 - `subscribe(filter) → Stream<Event>` — for SSE.
 
 #### 3.5.2 Checkpoint and Resume Store
 
-**Responsibility.** Persists run state after every phase completion to `.anvil/run-state.json`: phase name, completion timestamp, artifact checksums, mode, profile, retry counters. On restart, identifies the last completed phase and signals the Development Manager to resume from the next incomplete phase. Versioned (`runStateVersion`) for forward compatibility.
+**Responsibility.** Persists run state after every phase completion to `.anvil/run-state.json`: phase name, completion timestamp, artifact checksums, mode, profile, retry counters, and stale-phase markers. On restart, loads the newest compatible format, migrates older formats when possible, validates referenced artifacts/checksums before phases are skipped, and returns the earliest valid resume point. Emits `ResumeFromCheckpoint` on success and `ResumeValidationFailed` when checkpoint metadata no longer matches workspace state. Versioned (`runStateVersion`) for forward compatibility.
 
-**Owns.** Spec FR-SV-021 through FR-SV-023; NFR-RB-004, NFR-RB-005.
+**Owns.** Spec FR-SV-021 through FR-SV-023, FR-SV-022A; NFR-RB-004, NFR-RB-005.
 
 **Depends on.** Event Bus (§3.5.1) for emitting `ResumeFromCheckpoint`.
 
 **Interfaces.**
 - `save(phase, metadata) → void`
 - `load() → RunState | null`
+- `validate_artifacts(run_state) → ResumeValidationResult`
+- `migrate(run_state) → RunState`
 - `last_completed_phase() → PhaseId | null`
 
 ### 3.6 Tools and Knowledge
@@ -262,7 +286,7 @@ This makes runs reproducible: the entire effective configuration is committed to
 
 #### 3.6.2 Skills Loader
 
-**Responsibility.** Implements progressive-disclosure skill loading. Skills (Markdown bundles with `SKILL.md` or `skill.json` manifests) are stored in `~/.anvil/skills/` and `.agents/skills/` and are loaded on demand when (a) a phase contract references them by name, (b) an agent explicitly requests one, or (c) drift remediation suggests one. Workspace skills override user-root skills by name; the resolved skill list is finalized at phase start.
+**Responsibility.** Implements progressive-disclosure skill loading. Skills (Markdown or code bundles with `SKILL.md` or `skill.json` descriptors) are stored in `~/.anvil/skills/`, `.anvil/skills/`, and built-in extension skill packs, and are loaded on demand when (a) a phase contract references them by name, (b) an agent explicitly requests one, or (c) drift remediation suggests one. Workspace skills override user-root and built-in skills by name; the resolved skill list is frozen at phase start and is not hot-reloaded during agent execution.
 
 **Owns.** Spec FR-SK-001 through FR-SK-008; proposal §8.7; background §581–600.
 
@@ -271,15 +295,16 @@ This makes runs reproducible: the entire effective configuration is committed to
 **Interfaces.**
 - `resolve_for_phase(phase_id) → Skill[]`
 - `load(skill_name) → SkillBundle`
+- `freeze_manifest(phase_id) → SkillManifest`
 - `emit_skill_loaded(skill) → void` — token-budget event.
 
 ### 3.7 External Integrations
 
 #### 3.7.1 OpenRouter LLM Provider
 
-**Responsibility.** Single abstraction over OpenRouter's model gateway. Implements **phase + task hybrid routing**: each phase declares a default model; subtasks within a phase (planning, coding, debugging, review) may route to different models. Initial defaults: Gemma 4 for planning/analysis/architecture; DeepSeek Coder for coding-heavy work. Supports user overrides at both phase and subtask granularity through configuration precedence. Tracks per-phase token usage and surfaces it to the Policy Engine for `TokenBudgetPerPhase` enforcement.
+**Responsibility.** Single abstraction over OpenRouter's model gateway. Implements **phase + subtask hybrid routing**: each phase declares a default model; subtasks within a phase (planning, analysis, coding, debugging, review) may route to different models. Initial defaults: Gemma 4 for planning, analysis, and architecture-oriented subtasks; DeepSeek Coder for coding-heavy and implementation-debugging subtasks; review subtasks inherit the phase default unless explicitly overridden. Supports user overrides at both phase and subtask granularity through configuration precedence. Tracks per-phase token usage, emits `ModelRouteSelected` and `TokenUsageReported`, and surfaces usage to the Policy Engine for `TokenBudgetPerPhase` enforcement.
 
-**Owns.** Proposal §10; spec §2.6 (model allowlist policy); NFR-TK-001 through NFR-TK-003.
+**Owns.** Proposal §10; spec FR-ML-001 through FR-ML-006; spec §2.6 (model allowlist policy); NFR-TK-001 through NFR-TK-003.
 
 **Depends on.** Secret Storage Adapter (§3.3.3), Policy Engine (§3.4.1), Event Bus (§3.5.1).
 
@@ -287,10 +312,11 @@ This makes runs reproducible: the entire effective configuration is committed to
 - `complete(phase, subtask, prompt) → CompletionResult`
 - `route(phase, subtask) → ModelId`
 - `usage_report(phase) → TokenUsage`
+- `report_usage(phase, subtask, usage) → BudgetDecision`
 
 #### 3.7.2 OpenHands SDK Adapter
 
-**Responsibility.** Wraps the OpenHands runtime (Tier-1 "agent core" in background §332). Manages the Dockerized execution sandbox, the OpenHands event stream, action/observation routing, and `LLM_CONFIG` wiring to the OpenRouter Provider. Surfaces native OpenHands events into the Anvil Event Bus and consumes hook configuration from `.openhands/hooks.json` produced by the Runtime Projection Layer. v0.1.0 uses in-process agent invocation; transport-agnostic interface allows a future message-bus or A2A migration without contract change.
+**Responsibility.** Wraps the OpenHands runtime (Tier-1 "agent core" in background §332). Manages the Dockerized execution sandbox, the OpenHands event stream, action/observation routing, and `LLM_CONFIG` wiring to the OpenRouter Provider. Consumes hook configuration from `.openhands/hooks.json`, invokes Hook Layer adapters for lifecycle boundaries that live above the SDK (approval, retry, escalation), and surfaces native OpenHands events into the Anvil Event Bus. v0.1.0 uses in-process agent invocation; transport-agnostic interface allows a future message-bus or A2A migration without contract change.
 
 **Owns.** Proposal §3 (OpenHands as orchestration engine); background §327–367 (custom agent architecture).
 
@@ -356,7 +382,6 @@ graph TD
     RP --> MCP
     PE --> CR
     HL --> PE
-    HL --> OHA
     MCP --> PE
     MCP --> HL
     SK --> CR
@@ -364,6 +389,7 @@ graph TD
     DC --> AV
 
     ORP --> SSA[Secret Storage Adapter]
+    ORP --> PE
     OHA --> ORP
     OHA --> HL
     CR --> SSA
@@ -385,6 +411,7 @@ sequenceDiagram
     participant CR as Config Resolver
     participant RP as Runtime Projection
     participant PE as Policy Engine
+    participant SRR as Specialist Registry
     participant EB as Event Bus
 
     U->>VS: /anvil start --mode=secure
@@ -394,6 +421,8 @@ sequenceDiagram
     CR-->>DM: EffectiveConfig
     DM->>RP: project(effective_config)
     RP->>PE: load policies (merged)
+    DM->>SRR: load_registry(user, workspace)
+    SRR-->>DM: EffectiveRegistry
     RP-->>DM: ProjectionManifest
     DM->>EB: emit SupervisorStarted
     DM->>API: RunId
@@ -410,7 +439,9 @@ stateDiagram-v2
     [*] --> PreconditionsCheck
     PreconditionsCheck --> Dispatch: deps satisfied
     PreconditionsCheck --> Escalate: missing inputs
-    Dispatch --> AgentRunning
+    Dispatch --> ContractGuard
+    ContractGuard --> AgentRunning: contract + path guard OK
+    ContractGuard --> Escalate: contract violation
     AgentRunning --> ArtifactValidate: PhaseComplete
     AgentRunning --> Retry: agent failure
     Retry --> Dispatch: attempts < 2
@@ -423,6 +454,10 @@ stateDiagram-v2
     Remediate --> Dispatch: remediation attempts < 2
     Remediate --> Escalate: remediation budget exhausted
     ApprovalGate --> Checkpoint: approved or no gate
+    ApprovalGate --> OverrideHandling: override requested
+    OverrideHandling --> Checkpoint: force-advance
+    OverrideHandling --> Rollback: rollback requested
+    Rollback --> [*]: downstream phases marked stale
     ApprovalGate --> [*]: user blocked
     Checkpoint --> [*]: phase complete
     Escalate --> [*]: paused
@@ -434,6 +469,7 @@ stateDiagram-v2
 sequenceDiagram
     participant DM as Dev Manager
     participant PA as Phase Agent
+    participant CS as Checkpoint Store
     participant EB as Event Bus
     participant U as User
 
@@ -448,8 +484,20 @@ sequenceDiagram
     DM->>PA: invoke (retry 2)
     PA-->>DM: failure(reason)
     DM->>EB: emit PhaseEscalation(packet)
-    DM->>U: ApprovalRequired (via API/VS Code)
-    U-->>DM: retry | rollback | stop
+    DM->>U: EscalationRequired (via API/VS Code)
+    alt user retries
+        U-->>DM: retry
+        DM->>EB: emit RetryAttempt(user_override)
+        DM->>PA: invoke(contract, payload)
+    else user rolls back
+        U-->>DM: rollback(target_phase, reason)
+        DM->>EB: emit RollbackRequested
+        DM->>CS: invalidate checkpoints >= target_phase
+        DM->>DM: mark downstream artifacts stale
+    else user stops
+        U-->>DM: stop(reason)
+        DM->>EB: emit RunStopped
+    end
 ```
 
 ### 5.4 Resume from Checkpoint
@@ -464,9 +512,56 @@ sequenceDiagram
     API->>DM: resume(run_id)
     DM->>CS: load()
     CS-->>DM: RunState{last_completed: blueprint}
-    DM->>EB: emit ResumeFromCheckpoint
-    Note over DM: skip phases ≤ blueprint
-    DM->>DM: dispatch_phase(plan)
+    DM->>CS: validate_artifacts(run_state)
+    alt checkpoint valid
+        CS-->>DM: ResumeValidationResult{resume_from: plan}
+        DM->>EB: emit ResumeFromCheckpoint
+        DM->>DM: dispatch_phase(plan)
+    else checkpoint invalid
+        CS-->>DM: ResumeValidationResult{resume_from: architecture, invalid: [blueprint]}
+        DM->>EB: emit ResumeValidationFailed
+        DM->>DM: dispatch_phase(architecture)
+    end
+```
+
+### 5.5 Approval Gate and Override Handling
+
+```mermaid
+sequenceDiagram
+    participant DM as Dev Manager
+    participant HL as Hook Layer
+    participant EB as Event Bus
+    participant API as Runtime API
+    participant U as User
+
+    DM->>HL: before_approval_decision(gate, context)
+    DM->>EB: emit ApprovalRequired
+    U->>API: POST /approve or /override
+    API->>DM: approval_or_override(payload)
+    alt approval granted
+        DM->>HL: after_approval_decision(gate, approved)
+        DM->>EB: emit ApprovalGranted
+    else override accepted
+        DM->>HL: after_approval_decision(gate, override)
+        DM->>EB: emit ApprovalOverrideAccepted
+    end
+```
+
+### 5.6 Specialist Invocation
+
+```mermaid
+sequenceDiagram
+    participant DM as Dev Manager
+    participant SRR as Specialist Registry
+    participant SA as Specialist Agent
+    participant EB as Event Bus
+
+    DM->>SRR: validate(role_id, phase_context)
+    SRR-->>DM: role allowed + protected paths OK
+    DM->>SA: invoke(role_id, context, approval_context)
+    SA-->>DM: SpecialistResult{status, outputs, checksums}
+    DM->>EB: emit SpecialistInvocationComplete
+    Note over DM: source-code changes requested by specialist are routed to Implementation phase
 ```
 
 ---
@@ -495,22 +590,24 @@ User intent lives in `~/.anvil/`; the run's actual runtime config is materialize
 
 ```
 ~/.anvil/                     (source of truth)
-├── agents/
 ├── skills/
+├── specialist-roles.yaml
 ├── mcp/servers.json
 ├── hooks/hooks.json
 ├── policies/*.yaml
 └── runtime/defaults.yaml
 
-<workspace>/                  (generated per run)
-├── .agents/skills/                              # workspace skill overlays
+<workspace>/                  (generated and referenced per run)
 ├── .anvil/
 │   ├── config.yaml          (workspace overrides)
 │   ├── policies/            (workspace policy overrides)
-│   ├── specialist-roles.yaml
+│   ├── skills/              (workspace skill overrides)
+│   ├── specialist-roles.yaml (workspace specialist overrides)
 │   ├── run-state.json       (checkpoint)
-│   ├── events.jsonl         (audit trail)
 │   └── mcp-tools-cache.json
+├── logs/
+│   ├── events.jsonl         (audit trail)
+│   └── run-summary.log      (phase summaries)
 └── .openhands/
     ├── hooks.json           (compiled effective hooks)
     └── runtime/
@@ -611,18 +708,19 @@ Every spec section maps to one or more components. Empty rows would indicate dri
 | §2.1.3 Role Separation (single-writer) | FR-ROLE-001 – FR-ROLE-005 | Development Manager, Phase Agent Framework |
 | §2.1.3 Operational Mode Enforcement | FR-SV-011 – FR-SV-013 | Development Manager, Anvil Runtime API |
 | §2.1.4 Artifact Validation & Drift | FR-SV-014 – FR-SV-016 | Artifact Validator, Drift Checker |
-| §2.1.5 Error Recovery & Escalation | FR-SV-017 – FR-SV-020 | Development Manager, Event Bus |
-| §2.1.6 Checkpoint-Based Resume | FR-SV-021 – FR-SV-023 | Checkpoint Store, Development Manager |
+| §2.1.5 Error Recovery & Escalation | FR-SV-017 – FR-SV-020, FR-SV-020A, FR-SV-020B | Development Manager, Event Bus, Checkpoint Store |
+| §2.1.6 Checkpoint-Based Resume | FR-SV-021 – FR-SV-023, FR-SV-022A | Checkpoint Store, Development Manager |
 | §2.1.7 Logging & Audit Trail | FR-SV-024 – FR-SV-026 | Event Bus |
 | §2.2 Phase Agent Contracts | FR-PA-001 – FR-PA-010 | Phase Agent Framework |
-| §2.3 Artifact Production & Validation | FR-AR-001 – FR-AR-006 | Artifact Validator, Phase Agent Framework |
-| §2.4 Operational Modes | FR-OM-001 – FR-OM-014 | Development Manager, Anvil Runtime API |
+| §2.3 Artifact Production & Validation | FR-AR-001 – FR-AR-008 | Artifact Validator, Development Manager, Phase Agent Framework |
+| §2.4 Operational Modes | FR-OM-001 – FR-OM-014, FR-OM-008A | Development Manager, Anvil Runtime API, Event Bus |
 | §2.5 Drift Detection & Remediation | FR-DR-001 – FR-DR-010 | Drift Checker, Development Manager |
-| §2.6 Policy Enforcement | FR-PL-001 – FR-PL-008 | Policy Engine, Hook Layer |
+| §2.6 Policy Enforcement | FR-PL-001 – FR-PL-008, FR-PL-003A | Policy Engine, Hook Layer |
 | §2.7 Configuration Precedence | FR-CF-001 – FR-CF-007 | Configuration Resolver, Runtime Projection |
+| §2.7.4 Phase/Subtask Model Routing | FR-ML-001 – FR-ML-006 | OpenRouter Provider, Policy Engine, Configuration Resolver |
 | §2.8 MCP Tool Integration | FR-MC-001 – FR-MC-014 | MCP Integration Layer, Policy Engine, Runtime Projection |
 | §2.9 Skills Loading | FR-SK-001 – FR-SK-008 | Skills Loader |
-| §2.10 Specialist Agent Extensibility | FR-SA-001 – FR-SA-017 | Specialist Role Registry, Phase Agent Framework |
+| §2.10 Specialist Agent Extensibility | FR-SA-001 – FR-SA-017 | Specialist Role Registry, Development Manager, Phase Agent Framework |
 | §3.1 Token Efficiency | NFR-TK-001 – NFR-TK-003 | OpenRouter Provider, Skills Loader, Phase Agent Framework |
 | §3.2 Latency & Performance | NFR-LT-001 – NFR-LT-005 | Development Manager, MCP Integration, Artifact Validator, Policy Engine |
 | §3.3 Observability | NFR-OB-001 – NFR-OB-005 | Event Bus, Secret Storage Adapter |
@@ -630,7 +728,7 @@ Every spec section maps to one or more components. Empty rows would indicate dri
 | §3.5 Security & Secrets | NFR-SC-001 – NFR-SC-005 | Secret Storage Adapter, Event Bus, OpenRouter Provider |
 | §3.6 Backward Compatibility | NFR-BC-001 – NFR-BC-004 | Configuration Resolver, Checkpoint Store, Artifact Validator, Specialist Role Registry |
 | §4.1 Phase Artifact Schemas | §4.1.1 – §4.1.10 | Artifact Validator (schemas), Phase Agent Framework (production) |
-| §4.2 Event & Hook Schemas | §4.2.1, §4.2.2 | Event Bus, Hook Layer |
+| §4.2 Event & Hook Schemas | §4.2.1, §4.2.2, §4.2.3 | Event Bus, Hook Layer, Anvil Runtime API |
 | §4.3 Policy File Schema | — | Policy Engine |
 | §5 Hooks & Events Lifecycle | §5.1 – §5.3 | Hook Layer, Event Bus |
 | §6 Security & Access Control | FR-SC-001 – FR-SC-003 | Policy Engine, Secret Storage Adapter, MCP Integration |
