@@ -35,8 +35,19 @@ Delivery target:
 
 ### 2.1 Slice 1: Project Skeleton and Contracts
 
-Status: NOT STARTED
+Status: ✅ COMPLETED (2026-05-31)
 Execution Mode: SERIAL (hard prerequisite)
+
+Completion notes:
+- Runtime + extension + tests scaffolds created; all Slice 1 modules from the
+  §8 assignment matrix implemented with no unmapped modules (no drift).
+- Python suite: 48 passed, 99% coverage on `anvil_runtime` (≥70%/≥85% met).
+- Tooling locked: vitest (TS) + pytest/pytest-cov/httpx (Python).
+- Carry-forward: the TypeScript vitest suite is written to spec but could not be
+  executed in the authoring environment (no Node.js/npm installed) — must run
+  before Slice 4 sign-off. PEP 604 union syntax kept verbatim via
+  `eval_type_backport` on the local Python 3.9 (inert on the 3.12 baseline).
+- Details: see `logs/implementation.log`.
 
 Objective:
 - Stand up repository structure for `extension/`, `runtime/`, and `tests/`.

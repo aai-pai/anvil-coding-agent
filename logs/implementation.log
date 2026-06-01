@@ -1,0 +1,110 @@
+# Anvil Implementation Journal
+
+Per docs/plan.md §9 (Operational Slice Rules) and
+.github/copilot-instructions.md (Implementation Logging).
+
+---
+
+## Slice 1: Project Skeleton and Contracts
+
+- Date: 2026-05-31
+- Plan reference: docs/plan.md §2.1
+- Status: PASSED (all tests green on first run)
+
+### Objective
+Stand up the repository structure for `runtime/`, `extension/`, and `tests/`,
+and implement the shared contracts, schemas, and constants that every later
+slice depends on.
+
+### Files created
+Runtime (Python):
+- runtime/pyproject.toml
+- runtime/anvil_runtime/__init__.py
+- runtime/anvil_runtime/config/__init__.py
+- runtime/anvil_runtime/config/schema.py          (constants + EffectiveConfig — blueprint §6.2, §4.1)
+- runtime/anvil_runtime/core/__init__.py
+- runtime/anvil_runtime/core/phase_contracts.py   (PHASE_IDS, PHASE_CONTRACTS, payloads, EventEnvelope, RunState — blueprint §3.1, §4.1)
+- runtime/anvil_runtime/api/__init__.py
+- runtime/anvil_runtime/api/models.py             (request/response models + *_SCHEMA constants — blueprint §4.1, §4.2, §5.1)
+- runtime/anvil_runtime/policy/__init__.py
+- runtime/anvil_runtime/policy/models.py          (PolicyRule, PolicyDocument, POLICY_RULE_SCHEMA — spec §4.3, blueprint §4.2)
+- runtime/anvil_runtime/agents/__init__.py
+- runtime/anvil_runtime/agents/base_phase_agent.py (BasePhaseAgent — blueprint §3.1)
+
+Extension (TypeScript):
+- extension/package.json
+- extension/tsconfig.json
+- extension/vitest.config.ts
+- extension/src/extension.ts                      (activation scaffold — blueprint §2.1)
+- extension/src/config/modeSelector.ts            (constants + mode helpers — blueprint §6.2, §6.3)
+- extension/src/config/workspaceConfig.ts         (pure workspace config resolver — blueprint §2.1, §6)
+
+Tests:
+- tests/conftest.py                               (adds runtime/ to sys.path)
+- pytest.ini                                       (root pytest config)
+- tests/unit/runtime/test_api_models.py
+- tests/unit/runtime/test_config_schema.py
+- tests/unit/runtime/test_phase_contracts.py
+- tests/unit/extension/test_mode_selector.ts
+- tests/integration/api/test_model_validation.py
+- tests/e2e/bootstrap/test_scaffold_boots.py
+
+Also: updated .gitignore (Python/Node build artifacts).
+
+### Test results
+- Python: `python -m pytest tests` → 48 passed.
+- Coverage (`--cov=anvil_runtime`): 99% overall (target ≥70% overall, ≥85%
+  for core/policy — both met).
+  - core/phase_contracts.py 100%, api/models.py 100%, policy/models.py 100%,
+    config/schema.py 100%, agents/base_phase_agent.py 89% (2 unreachable lines:
+    abstract-method body and empty-contract fallback).
+- TypeScript: NOT RUN — see Environment Constraints below.
+
+### Issues encountered and fixes (attempt counts)
+1. Pydantic v2 could not evaluate the blueprint's PEP 604 union syntax
+   (`str | None`) on the available Python 3.9 interpreter.
+   - Attempt 1: `from __future__ import annotations` alone → still failed
+     (pydantic resolves annotations at model build via typing).
+   - Attempt 2 (fix): added `eval_type_backport` as a `python_version < "3.10"`
+     conditional dependency. This keeps the blueprint syntax verbatim (no drift)
+     while remaining runnable on 3.9. On the spec's Python 3.12 baseline the
+     backport is an inert no-op. Verified green.
+- No other failures; Python suite passed on the first full run after the
+  pydantic fix.
+
+### Tooling decisions locked (residual gap from plan §7 / blueprint §7)
+- TypeScript test runner: **vitest** (lightest modern default; pure config
+  modules are unit-testable without the VS Code API; the extension-host harness
+  is deferred to Slice 4).
+- Python: **pytest + pytest-cov + httpx** (httpx test client used from Slice 4).
+
+### Drift check (against blueprint / architecture / spec)
+- Module set created == the Slice-1 rows of the plan §8 assignment matrix
+  (runtime __init__, api/models, core/phase_contracts, config/schema,
+  policy/models, agents/base_phase_agent; extension extension.ts,
+  config/modeSelector, config/workspaceConfig). No unmapped modules.
+- Package `__init__.py` markers and per-subpackage docstrings are scaffolding
+  required for importable packages, not new components.
+- Field names and constants taken verbatim from blueprint §4.1/§4.2/§6.2 and
+  spec §4.3 (PolicyRule). `*_SCHEMA` constants are derived from the canonical
+  models so schema and validation cannot diverge.
+- No drift detected.
+
+### Environment constraints (carry-forward)
+1. **No Node.js / npm in the authoring environment.** The TypeScript extension
+   and its vitest suite (`tests/unit/extension/test_mode_selector.ts`) are
+   written to spec but were NOT built or executed here. They must be run on a
+   machine with Node before Slice 4 sign-off. Plan §2.1's "run TS tests"
+   criterion is therefore PENDING-ON-NODE for the extension half.
+2. **Interpreter is Python 3.9, spec targets 3.12.** Mitigated via
+   `eval_type_backport` (above); the source matches the 3.12-targeted blueprint
+   syntax unchanged.
+3. Runtime third-party deps were installed ad hoc (pydantic, fastapi, pytest,
+   pytest-cov, httpx, pyyaml, eval_type_backport). They are declared in
+   runtime/pyproject.toml for reproducibility.
+
+### Next slice
+Slice 2 (Runtime Core Orchestration) and Slice 3 (Config/Policy/Hooks) both
+depend only on Slice 1 and can proceed. Note: docs/plan.md labels these
+PARALLELIZABLE, but proposal §8.6 defers true parallel DAG execution to a future
+release — v0.1.0 executes slices serially.
