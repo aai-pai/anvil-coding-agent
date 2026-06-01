@@ -108,3 +108,166 @@ Slice 2 (Runtime Core Orchestration) and Slice 3 (Config/Policy/Hooks) both
 depend only on Slice 1 and can proceed. Note: docs/plan.md labels these
 PARALLELIZABLE, but proposal §8.6 defers true parallel DAG execution to a future
 release — v0.1.0 executes slices serially.
+
+---
+
+## Slice 2: Runtime Core Orchestration
+
+- Date: 2026-05-31
+- Plan reference: docs/plan.md §2.2
+- Status: PASSED (all tests green; first full run after authoring passed)
+
+### Objective
+Build the development manager (supervisor state machine), phase DAG/registry,
+retry/escalation controls, checkpoint lifecycle, event bus, run summary, and the
+twelve phase-agent stubs.
+
+### Files created
+core/:
+- core/phase_dag.py            (PhaseDAG: linear pipeline, ready_phases, downstream_of, cycle validate — FR-SV-005)
+- core/phase_registry.py       (PhaseRegistry: phase->contract lookup)
+- core/retry_controller.py     (RetryController: 2-retry budget, 2s exp backoff — FR-SV-018, NFR-RB-002)
+- core/escalation_service.py   (EscalationPacket + EscalationService.escalate — FR-SV-019/020)
+- core/development_manager.py  (DevelopmentManager supervisor: start/dispatch/run_until_pause,
+                                gate pause+approval, retries->escalation, rollback, resume — FR-SV-006..023)
+state/:
+- state/__init__.py
+- state/event_bus.py           (EventBus: JSONL append + subscribe/stream — FR-SV-024/026)
+- state/checkpoint_store.py    (CheckpointStore + PhaseCheckpoint: save/load/invalidate/earliest_invalid_phase — FR-SV-021/022A)
+- state/run_summary.py         (RunSummaryWriter: human-readable per-phase log — FR-SV-025)
+agents/:
+- agents/factory.py            (PhaseAgentFactory.create(phase_id) — blueprint §3.1)
+- agents/phase_invocation.py   (build_invocation_payload + stub_phase_result)
+- agents/phases/__init__.py + 12 phase agents (proposal..cleanup), deterministic stubs
+
+Tests:
+- tests/unit/runtime/test_phase_dag.py
+- tests/unit/runtime/test_retry_controller.py
+- tests/unit/runtime/test_checkpoint_store.py
+- tests/unit/runtime/test_development_manager.py
+- tests/unit/runtime/test_event_bus.py          (added: subscribe/stream coverage)
+- tests/integration/phase_flow/test_secure_gate_pause.py
+- tests/integration/phase_flow/test_resume_with_invalid_checkpoint.py
+- tests/e2e/checkpoint_resume/test_resume_after_restart.py
+
+### Test results
+- `python -m pytest tests` → 76 passed (48 from Slice 1 + 28 new).
+- Coverage (`--cov=anvil_runtime`): 95% overall.
+  - core aggregate ≈93% (dev_manager 90%, escalation 100%, dag 100%, retry 100%,
+    registry 76%); state aggregate ≈91% (checkpoint 92%, event_bus 98%,
+    run_summary 86%). Both clear the ≥85% targets; overall clears ≥70%.
+
+### Design decisions (within blueprint/spec, no drift)
+- Phase DAG is the linear 12-phase pipeline (each phase depends on its
+  predecessor), executed serially in topological order (proposal §8.6,
+  architecture §686). Declaration is parallel-ready.
+- Phase agents are deterministic success stubs in v0.1.0; real OpenHands-backed
+  execution replaces `stub_phase_result` in Slice 5 without changing the
+  `payload -> PhaseCompleteEvent` contract (plan §3.3 "phase agent stubs").
+- Result/orchestration models not pinned to a specific file by the blueprint
+  (RunProgress, PhaseDispatchResult, ApprovalDecision, RollbackPlan, ResumePlan,
+  EscalationPacket, PhaseCheckpoint) were defined inside their already-assigned
+  matrix modules — no new module files were introduced (no drift vs plan §8).
+- Secure gates: post-proposal/post-architecture/post-blueprint fire AFTER their
+  phase; pre-deployment fires BEFORE the deployment phase (proposal §7). YOLO
+  skips user-facing gates but keeps internal controls (FR-OM-002).
+
+### Issues encountered and fixes
+- None functionally; all suites passed on the first full run. After the initial
+  green run, added test_event_bus.py and a failing-agent escalation test to
+  exercise the retry->escalation path (FR-SV-017/019), which the success-only
+  stubs did not cover. Raised overall coverage 91% -> 95%.
+
+### Drift check (against blueprint / architecture / spec)
+- Modules created == the Slice-2 rows of the plan §8 assignment matrix
+  (core/{development_manager,phase_dag,phase_registry,retry_controller,
+  escalation_service}; agents/{factory,phase_invocation,phases/*};
+  state/{event_bus,checkpoint_store,run_summary}). No unmapped modules.
+- state/event_bus.py is shared with Slice 6 (completeness/redaction pass later);
+  Slice 2 implements emit/subscribe/stream only, as planned.
+- No drift detected.
+
+### Carry-forward
+- Phase agents are stubs (no real artifact authoring) until Slice 5; therefore
+  FR-SV-009 artifact-existence enforcement and FR-SV-010 drift checks are
+  intentionally deferred to Slice 6 (artifacts/validator, drift/checker).
+- The TypeScript extension still requires Node.js to run its vitest suite (see
+  Slice 1 carry-forward); unchanged by Slice 2 (runtime-only).
+
+---
+
+## Slice 3: Config, Runtime Projection, Policy, and Hooks
+
+- Date: 2026-05-31
+- Plan reference: docs/plan.md §2.3
+- Status: PASSED (all tests green)
+
+### Objective
+Implement effective configuration resolution (4-level precedence), runtime
+projection writing, policy enforcement + remediation, and lifecycle hook
+enforcement.
+
+### Files created
+config/:
+- config/loader.py       (ConfigLoader + ConfigSources; reads 4 levels, YAML errors per FR-CF-007)
+- config/merger.py       (ConfigMerger + deep_merge: scalar override / list union / deep map — FR-CF-001/002/003)
+- config/validator.py    (ConfigValidator: version + consistency checks — FR-CF-004/006)
+- config/projection.py   (RuntimeProjectionWriter + ProjectionManifest: .openhands/runtime/*, hooks.json, logs/)
+policy/:
+- policy/rule_evaluator.py (RuleEvaluator + PolicyActionContext/PolicyViolation: whitelist/numeric-limit/list-mandatory)
+- policy/remediation.py    (Remediator + RemediationOutcome: switch-to-allowed-model — FR-PL-008)
+- policy/engine.py         (PolicyEngine + PolicyDecision: check/apply_remediation/enforce — FR-PL-004/005/007)
+hooks/:
+- hooks/__init__.py
+- hooks/lifecycle_hooks.py (HookKind/HookRule/HookDecision/TokenUsage + matchers — spec §4.2.2)
+- hooks/compiler.py        (HookCompiler -> .openhands/hooks.json)
+- hooks/adapter.py         (HookAdapter: before/after tool+prompt, allow/deny/mutate + audit)
+
+Tests:
+- tests/unit/runtime/test_config_merger.py        (merge semantics, loader, validator)
+- tests/unit/runtime/test_projection_writer.py
+- tests/unit/runtime/test_policy_engine.py
+- tests/unit/runtime/test_hook_adapter.py
+- tests/integration/policy/test_forbidden_model_remediation.py
+- tests/integration/policy/test_hook_enforcement.py
+- tests/e2e/security_profile/test_restricted_policy_flow.py
+
+### Test results
+- `python -m pytest tests` → 106 passed (30 new).
+- Coverage (`--cov=anvil_runtime`): 94% overall.
+  - config aggregate ≈96%, policy aggregate ≈90%, hooks aggregate ≈93% — all
+    clear the ≥85% targets where applicable; overall clears ≥70%.
+
+### Design decisions (within blueprint/spec, no drift)
+- List-union merge preserves lowest-precedence-first order with de-duplication,
+  matching the FR-CF-002 worked example exactly.
+- Projection writes mcp.generated.json + policy-snapshot.json (blueprint §6.1)
+  and delegates hook compilation to HookCompiler (.openhands/hooks.json,
+  spec §4.2.2); manifest carries content checksums for reproducibility.
+- Policy v0.1.0 supports the three spec-defined rule families (whitelist /
+  numeric-limit / list-mandatory). `switch-to-allowed-model` is the implemented
+  remediation strategy; unremediable violations return no outcome so the
+  supervisor escalates (FR-PL-005).
+- Helper contracts (ConfigSources, ProjectionManifest, PolicyActionContext,
+  PolicyViolation, RemediationOutcome, PolicyDecision, HookRule, HookDecision,
+  TokenUsage) were defined inside their already-assigned matrix modules — no new
+  module files introduced (no drift vs plan §8).
+
+### Issues encountered and fixes
+- None functionally; suites passed on the first full run. Added two follow-up
+  tests (validator consistency guards; list-mandatory gate rule) to cover real
+  branches that the happy-path tests skipped.
+
+### Drift check (against blueprint / architecture / spec)
+- Modules created == the Slice-3 rows of the plan §8 assignment matrix
+  (config/{loader,merger,validator,projection}; policy/{engine,remediation,
+  rule_evaluator}; hooks/{adapter,compiler,lifecycle_hooks}). No unmapped modules.
+- config/schema.py and policy/models.py (Slice 1) were consumed, not modified.
+- No drift detected.
+
+### Carry-forward
+- Policy/hook engines are standalone and event-bus-aware but are not yet wired
+  into the DevelopmentManager dispatch path; that integration occurs alongside
+  the API surface (Slice 4) and OpenHands adapter (Slice 5).
+- MCP server projection writes the resolved server list; live MCP discovery +
+  tool authorization is Slice 5 (tools/*).

@@ -85,8 +85,19 @@ Tests required in this slice:
 
 ### 2.2 Slice 2: Runtime Core Orchestration
 
-Status: NOT STARTED
-Execution Mode: PARALLELIZABLE (after Slice 1)
+Status: ✅ COMPLETED (2026-05-31)
+Execution Mode: PARALLELIZABLE (after Slice 1) — executed serially per proposal §8.6
+
+Completion notes:
+- DevelopmentManager supervisor (start/dispatch/run_until_pause, secure+gated
+  approval gates, bounded retries→escalation, rollback, checkpoint resume),
+  PhaseDAG (linear pipeline), PhaseRegistry, RetryController, EscalationService,
+  EventBus, CheckpointStore, RunSummaryWriter, PhaseAgentFactory, and 12 phase
+  stubs — all from the §8 matrix, no unmapped modules (no drift).
+- Tests: 76 passed total (28 new), 95% coverage; core ≈93%, state ≈91% (≥85% met).
+- Carry-forward: phase agents are stubs until Slice 5; artifact-existence
+  (FR-SV-009) and post-phase drift (FR-SV-010) enforcement land in Slice 6.
+- Details: see `logs/implementation.log`.
 
 Objective:
 - Build the development manager, phase DAG/registry, retry/escalation controls, and checkpoint lifecycle.
@@ -123,8 +134,20 @@ Tests required in this slice:
 
 ### 2.3 Slice 3: Config, Runtime Projection, Policy, and Hooks
 
-Status: NOT STARTED
-Execution Mode: PARALLELIZABLE (after Slice 1)
+Status: ✅ COMPLETED (2026-05-31)
+Execution Mode: PARALLELIZABLE (after Slice 1) — executed serially per proposal §8.6
+
+Completion notes:
+- Config 4-level precedence (scalar override / list union / deep map merge),
+  loader (YAML), validator (version + consistency), runtime projection writer
+  (.openhands/runtime/* + hooks.json + logs/), policy engine + rule evaluator +
+  remediation (switch-to-allowed-model), and hook compiler/adapter
+  (allow/deny/mutate + audit) — all from the §8 matrix, no unmapped modules.
+- Tests: 106 passed total (30 new), 94% coverage; config ≈96%, policy ≈90%,
+  hooks ≈93% (≥85% met).
+- Carry-forward: policy/hook engines not yet wired into DevelopmentManager
+  dispatch — that wiring lands with Slice 4 (API) / Slice 5 (OpenHands adapter).
+- Details: see `logs/implementation.log`.
 
 Objective:
 - Implement effective configuration resolution, runtime projection writing, policy enforcement, and lifecycle hook enforcement.
