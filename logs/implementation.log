@@ -572,10 +572,14 @@ Tests:
 6. ✅ logs/implementation.log captures slice-by-slice execution.
 
 ### Outstanding (non-blocking) carry-forward
-- TypeScript extension build + vitest suites (test_mode_selector, test_runtime_client,
-  test_command_router) require Node.js, which is unavailable in this authoring
-  environment. Written to spec; must be run on a Node-equipped machine before any
-  release sign-off. This is the only item preventing a 100%-executed sign-off.
+- RESOLVED (2026-05-31): the TypeScript carry-forward is closed. Node.js v24.16.0 /
+  npm 11.13.0 were installed (winget OpenJS.NodeJS.LTS); `npm install` + `npm test`
+  in extension/ run all three vitest suites green — test_mode_selector (9),
+  test_runtime_client (5), test_command_router (11) = 25 passed — and `npm run build`
+  (`tsc -p ./`) type-checks the full extension (all ~16 modules, incl. the
+  vscode-bound ones) with exit 0 and emits dist/extension.js. package-lock.json is
+  committed for reproducible installs. The Python (208) + TypeScript (25) suites are
+  now both fully executed and green: 100%-executed sign-off achieved.
 - Optional future wiring (not in the v0.1.0 plan §8 scope): connect the Slice 5
   SessionBridge and the Slice 6 ArtifactValidator/DriftChecker into the
   DevelopmentManager dispatch path so phase agents run real execution and post-phase
