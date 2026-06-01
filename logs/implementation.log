@@ -376,3 +376,93 @@ Tests:
   execution path; LLM/tool dispatch wiring is Slice 5 (sdk/* + llm/* + tools/*).
 - Live SSE tailing (vs. snapshot replay) is a non-blocking enhancement on the
   existing EventBus.subscribe contract.
+
+---
+
+## Slice 5: Tools, Skills, LLM Routing, and OpenHands Adapter
+
+- Date: 2026-05-31
+- Plan reference: docs/plan.md §2.5
+- Status: PASSED (all Python suites green)
+
+### Objective
+Implement external tool integration (MCP), progressive skill loading, phase+
+subtask model routing with usage tracking, and the OpenHands execution bridge.
+
+### Files created
+tools/:
+- tools/__init__.py
+- tools/core_tools.py        (CORE_TOOLS registry + is_core_tool — FR-MC-014, never deniable)
+- tools/mcp_cache.py         (MCPCache + CachedTool → .anvil/mcp-tools-cache.json — FR-MC-006)
+- tools/tool_authorizer.py   (ToolAuthorizer: open/restricted/strict + whitelist/blacklist globs — FR-MC-007/008)
+- tools/mcp_manager.py       (MCPManager.discover/invoke; ServerConnector transport; cache fallback FR-MC-012, retry-once FR-MC-013, schema check FR-MC-011)
+skills/:
+- skills/__init__.py
+- skills/manifest.py         (SkillRef/SkillBundle + SKILL.md frontmatter / skill.json parsing — FR-SK-002)
+- skills/resolver.py         (SkillResolver: workspace>user>builtin precedence FR-SK-005, phase-scoped FR-SK-006)
+- skills/loader.py           (SkillLoader.resolve_for_phase/load; SkillLoaded emit FR-SK-004; SkillNotAvailableError FR-SK-008)
+llm/:
+- llm/__init__.py
+- llm/model_router.py        (ModelRouter.route/select; FR-ML-003 defaults; override precedence FR-ML-005; policy remediation + ModelRouteSelected FR-ML-004/006)
+- llm/usage_tracker.py       (UsageTracker: per-phase accumulation, TokenUsageReported, budget check NFR-TK-003)
+- llm/openrouter_provider.py (OpenRouterProvider.complete; SecretAdapter key, injectable transport, OfflineTransport default, never logs key NFR-SC-003)
+sdk/:
+- sdk/__init__.py
+- sdk/openhands_adapter.py   (OpenHandsAdapter.start_session/run_phase_step; injectable OpenHandsBackend; deterministic InProcessBackend — no SDK dependency)
+- sdk/session_bridge.py      (SessionBridge.execute_phase → PhaseCompleteEvent; routes model + records usage)
+
+Tests:
+- tests/unit/runtime/test_mcp_authorization.py        (core/open/restricted/strict, glob, fail-closed)
+- tests/unit/runtime/test_skill_loader.py             (precedence override, phase scoping, SkillLoaded, missing→raise)
+- tests/unit/runtime/test_model_router.py             (defaults, override precedence, policy remediation/allow/deny)
+- tests/unit/runtime/test_usage_tracker.py            (accumulation, budget detection, TokenUsageReported)
+- tests/unit/runtime/test_openrouter_provider.py      (offline usage, missing-key error, env-key not leaked)
+- tests/integration/policy/test_mcp_restricted_profile.py (whitelist/deny, schema mismatch, core exemption)
+- tests/integration/runtime/test_openhands_adapter_session.py (deterministic sessions; bridge→PhaseCompleteEvent; model route)
+- tests/e2e/tools_and_models/test_mcp_timeout_fallback.py (cache fallback vs escalation on discovery timeout)
+
+### Test results
+- `python -m pytest tests` → 170 passed (33 new; 137 → 170).
+- Coverage (`--cov=anvil_runtime`): 94% overall. New modules: model_router 100%,
+  openhands_adapter 100%, session_bridge 100%, tool_authorizer 100%, core_tools 100%,
+  openrouter_provider 100%, usage_tracker 98%, mcp_cache 94%, mcp_manager 93%,
+  skills resolver/loader/manifest 82/84/78% (overall ≥70% met).
+
+### Design decisions (within blueprint/spec, no drift)
+- All external integrations are behind injected interfaces with deterministic
+  offline defaults: MCP `ServerConnector` (default EmptyConnector), OpenRouter
+  `CompletionTransport` (default OfflineTransport), OpenHands `OpenHandsBackend`
+  (default InProcessBackend). This satisfies the architecture "in-process now,
+  transport-agnostic later" note and keeps the runtime + tests network-free with
+  no hard dependency on the openhands package.
+- Model slugs follow the policy-example convention (`deepseek-coder`, spec §4.3);
+  `gemma-4` is the planning/analysis slug. `_CODING_PHASES = {implementation, qa}`
+  default to the coding model; all others default to the planning model; review
+  inherits the phase default (architecture §305).
+- ModelRouter.select() reuses the Slice 3 PolicyEngine.enforce() so model-allowlist
+  remediation (switch-to-allowed-model) is shared, not reimplemented.
+- Helper contracts (MCPServer, DiscoveredTool, ToolInvocationRequest/Result,
+  SkillRef/SkillBundle, CompletionRequest/Response, AgentRuntimeConfig/PhaseStep/
+  StepResult, PhaseUsage, ModelRouteDecision) live inside their assigned matrix
+  modules — no new module files (same approach as Slices 2/3/4).
+
+### Issues encountered and fixes
+- openrouter_provider initially at 0% line coverage (no required test referenced it).
+  Added tests/unit/runtime/test_openrouter_provider.py → 100%. No functional change.
+- All suites passed on the first full run after authoring; no retries needed.
+
+### Drift check (against blueprint / architecture / spec)
+- Modules created == the Slice-5 rows of the plan §8 assignment matrix
+  (tools/{mcp_manager,mcp_cache,core_tools,tool_authorizer}; skills/{loader,resolver,
+  manifest}; llm/{openrouter_provider,model_router,usage_tracker}; sdk/{openhands_adapter,
+  session_bridge}). No unmapped source modules; package __init__.py are scaffolding.
+- No Slice 1 protected files and no Slice 2 modules (development_manager, phase
+  agents) were modified. No drift detected.
+
+### Carry-forward
+- SessionBridge is the seam that replaces stub_phase_result, but wiring it into the
+  phase agents / DevelopmentManager dispatch is a deferred integration step (those
+  are Slice 2 modules; touching them would be cross-slice). The 12 phase agents stay
+  deterministic stubs; FR-SV-009 artifact-existence + FR-SV-010 drift land in Slice 6.
+- Live MCP/OpenRouter/OpenHands backends swap in behind the injected interfaces.
+- TypeScript suites still require Node.js (Slice 1 carry-forward).

@@ -268,8 +268,37 @@ Tests required in this slice:
 
 ### 2.5 Slice 5: Tools, Skills, LLM Routing, and OpenHands Adapter
 
-Status: NOT STARTED
-Execution Mode: PARALLELIZABLE (requires Slices 2 and 3 complete)
+Status: ✅ COMPLETED (2026-05-31)
+Execution Mode: PARALLELIZABLE (requires Slices 2 and 3 complete) — executed serially per proposal §8.6
+
+Completion notes:
+- MCP stack: `core_tools` (FR-MC-014 built-ins, never deniable), `tool_authorizer`
+  (open/restricted/strict + whitelist/blacklist globs), `mcp_cache`
+  (.anvil/mcp-tools-cache.json), and `mcp_manager` (discovery → cache → fallback/
+  escalation per FR-MC-012; authorized invocation with schema validation +
+  retry-once per FR-MC-011/013). Server transport injected (`ServerConnector`).
+- Skills: `manifest` (SKILL.md frontmatter / skill.json), `resolver` (workspace>
+  user>builtin precedence, phase-scoped), `loader` (on-demand load, `SkillLoaded`
+  emit, escalate on missing — FR-SK-003..008).
+- LLM: `model_router` (phase+subtask defaults FR-ML-003: gemma-4 planning/analysis,
+  deepseek-coder coding/debugging, review→phase default; override precedence;
+  policy remediation + `ModelRouteSelected` FR-ML-004/006), `usage_tracker`
+  (per-phase accumulation, `TokenUsageReported`, budget check NFR-TK-003),
+  `openrouter_provider` (SecretAdapter key resolution, injectable transport,
+  offline default, never logs the key NFR-SC-003).
+- OpenHands: `openhands_adapter` (injectable backend; deterministic in-process
+  default — no hard SDK dependency) + `session_bridge` (maps a phase payload to
+  the supervisor's `PhaseCompleteEvent` contract, routing model + recording usage).
+- All from the §8 matrix, no unmapped modules. Tests: 170 passed total (33 new);
+  new packages ≈93–100% (model_router/openhands/session_bridge/tool_authorizer/
+  openrouter 100%, mcp_manager 93%, skills 78–84%), overall 94%.
+- Carry-forward: the SessionBridge is the seam that replaces `stub_phase_result`,
+  but wiring it into the phase agents / DevelopmentManager dispatch is a downstream
+  integration step (those are Slice 2 modules; left untouched to avoid drift — the
+  12 phase agents remain deterministic stubs). MCP live transport, real OpenRouter
+  HTTP, and OpenHands SDK backends swap in behind the injected interfaces without
+  contract changes. TypeScript suites still pending Node (Slice 1 carry-forward).
+- Details: see `logs/implementation.log`.
 
 Objective:
 - Implement external tool integration, progressive skill loading, model routing, and OpenHands execution bridge.
