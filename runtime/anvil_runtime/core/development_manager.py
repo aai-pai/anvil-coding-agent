@@ -19,7 +19,7 @@ from typing import Callable, Literal
 from pydantic import BaseModel, Field
 
 from anvil_runtime.agents.factory import PhaseAgentFactory
-from anvil_runtime.agents.phase_invocation import build_invocation_payload
+from anvil_runtime.agents.phase_invocation import DefaultExecutor, build_invocation_payload
 from anvil_runtime.api.models import (
     ApprovalRequest,
     OverrideRequest,
@@ -121,6 +121,10 @@ class DevelopmentManager:
         run_summary: RunSummaryWriter | None = None,
         retry_controller: RetryController | None = None,
         clock: Callable[[], datetime] | None = None,
+        executor: object | None = None,
+        artifact_validator: object | None = None,
+        drift_checker: object | None = None,
+        drift_context_provider: Callable[[str], object] | None = None,
     ) -> None:
         self._root = workspace_root
         self._config = config or EffectiveConfig()
@@ -136,6 +140,12 @@ class DevelopmentManager:
         )
         self._escalation = EscalationService(self._events)
         self._clock = clock or (lambda: datetime.now(timezone.utc))
+        # Post-v0.1.0 integration: pluggable execution + post-phase gates. The
+        # defaults preserve the deterministic stub behavior exactly.
+        self._executor = executor or DefaultExecutor()
+        self._validator = artifact_validator
+        self._drift_checker = drift_checker
+        self._drift_context_provider = drift_context_provider
         self._runs: dict[str, _RunContext] = {}
 
     # -- lifecycle --------------------------------------------------------
@@ -191,15 +201,45 @@ class DevelopmentManager:
         payload = build_invocation_payload(contract, phase_context={"run_id": run_id})
         self._emit(run_id, "PhaseStarted", phase_id)
         agent = self._factory.create(phase_id)
-        event = agent.run(payload)
+        event = self._executor.run(agent, payload)
         attempt = self._retries.attempts(run_id, phase_id) + 1
         if event.status != "success":
             return self._handle_failure(ctx, phase_id, event, attempt)
+        # Post-phase gates: artifact validation (FR-SV-009) then drift (FR-SV-010).
+        gate_failure = self._post_phase_checks(ctx, phase_id, event)
+        if gate_failure is not None:
+            return self._handle_failure(ctx, phase_id, gate_failure, attempt)
         self._record_success(ctx, phase_id, event)
         return PhaseDispatchResult(
             run_id=run_id, phase=phase_id, status="success",
             attempt=attempt, complete_event=event,
         )
+
+    def _post_phase_checks(
+        self, ctx: _RunContext, phase_id: str, event: PhaseCompleteEvent
+    ) -> PhaseCompleteEvent | None:
+        """Run optional artifact validation + drift; return a failure event or None."""
+        if self._validator is not None:
+            result = self._validator.validate(phase_id, event.artifact_paths)
+            if not result.valid:
+                reasons = "; ".join(i.detail for i in result.issues)
+                return event.model_copy(update={
+                    "status": "failure",
+                    "failure_reason": f"artifact validation failed: {reasons}",
+                })
+        if (
+            self._drift_checker is not None
+            and self._drift_context_provider is not None
+            and phase_id == "implementation"
+        ):
+            context = self._drift_context_provider(ctx.run_id)
+            report = self._drift_checker.check(phase_id, context)
+            if report.highest_severity in ("major", "critical"):
+                return event.model_copy(update={
+                    "status": "failure",
+                    "failure_reason": f"{report.highest_severity} drift detected",
+                })
+        return None
 
     def _handle_failure(
         self, ctx: _RunContext, phase_id: str, event: PhaseCompleteEvent, attempt: int

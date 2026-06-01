@@ -586,3 +586,65 @@ Tests:
   validation/drift checks fire automatically (FR-SV-009/010 enforcement at runtime).
   The components and their contracts are complete and unit/integration tested; only
   the supervisor wiring remains, deferred to avoid cross-slice edits to Slice 2.
+
+---
+
+## Post-v0.1.0 Integration: Real Execution Pipeline (REST)
+
+- Date: 2026-06-01
+- Scope: beyond docs/plan.md §8 (the v0.1.0 slice plan). Connects the Slice 5
+  SessionBridge and the Slice 6 ArtifactValidator into live supervisor dispatch and
+  adds a real OpenRouter transport, so a run over the REST API produces real,
+  validated artifacts. Requested by the user after the v0.1.0 sign-off.
+- Status: DONE (214 Python tests green; verified via live uvicorn smoke).
+
+### What changed
+- llm/openrouter_provider.py: added `HttpxTransport` (real OpenRouter
+  chat-completions call; key in Authorization header, never logged; injectable
+  client for tests). Offline transport remains the default.
+- sdk/openhands_adapter.py: added `LLMBackend` (implements OpenHandsBackend) — prompts
+  the provider and writes each output path to disk; documents get the FR-AR-005
+  metadata header + required section headings so they pass ArtifactValidator.
+  PhaseStep gained `input_files` (→ derivedFrom lineage).
+- sdk/session_bridge.py: passes payload.input_files into the PhaseStep.
+- agents/phase_invocation.py: added `DefaultExecutor` (delegates to agent.run —
+  preserves stub behavior) and `BridgeExecutor` (runs via SessionBridge), plus
+  `subtask_for_phase`.
+- core/development_manager.py (Slice 2, intentional post-plan edit): pluggable
+  `executor` (default DefaultExecutor → unchanged behavior) and optional
+  `artifact_validator` / `drift_checker` / `drift_context_provider`. A failed
+  post-phase artifact validation (FR-SV-009) or major/critical drift (FR-SV-010) is
+  converted into a phase failure → existing retry/escalation path.
+- app.py: `create_app(execution_mode=...)` + `ANVIL_EXECUTION_MODE` env
+  (stub | offline-llm | real) assembles the LLM-backed supervisor for the real
+  modes; `uvicorn anvil_runtime.app:app` honors the env var. Default stays `stub`.
+- pyproject: added httpx + uvicorn runtime deps. docs/RUNNING.md documents the
+  modes and the curl/uvicorn commands.
+
+### Tests
+- tests/integration/runtime/test_real_execution_pipeline.py (HttpxTransport request
+  shaping w/ fake client; LLMBackend writes a validated document; full supervisor
+  run with the real pipeline writes+validates all 12 phases; invalid artifact fails
+  the phase → escalation).
+- tests/e2e/full_run/test_rest_real_pipeline_run.py (create_app offline-llm over
+  TestClient: 12 phases, real docs on disk, artifacts endpoint serves sha-256).
+- Full suite: 214 passed (208 → 214). Existing behavior unchanged (executor/validator
+  default off).
+
+### Live verification
+- `ANVIL_EXECUTION_MODE=offline-llm uvicorn anvil_runtime.app:app` (port 8799):
+  POST /v1/runs (yolo) → status completed, 12 phases; docs/ populated with
+  proposal.md, spec.md, architecture.md, blueprint.md, plan.md, qa-test-plan.md,
+  packaging/documentation/deployment plans, phase-summary-log.md (+ GENERATED.md for
+  directory phases), each with metadata header + required sections; GET
+  /v1/artifacts/proposal served a sha-256 checksum.
+
+### Remaining for full production use
+- Set OPENROUTER_API_KEY and ANVIL_EXECUTION_MODE=real for genuine LLM content
+  (placeholder text in offline mode marks where model output lands).
+- Coding-phase outputs (src/, tests/) currently get a single generated file;
+  multi-file code generation and a real OpenHands/Docker tool-execution backend are
+  the next depth increment (the OpenHandsBackend interface already supports swapping
+  it in). MCP live transport likewise plugs into the existing ServerConnector.
+- DriftChecker is wired into the supervisor but inert unless a drift_context_provider
+  is supplied (a project needs declared-vs-implemented inputs to compare).

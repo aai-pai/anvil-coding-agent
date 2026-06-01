@@ -54,6 +54,7 @@ class SessionBridge:
             instruction=f"Execute phase '{phase}' producing {payload.output_paths}",
             subtask=subtask,
             output_paths=list(payload.output_paths),
+            input_files=list(payload.input_files),
         )
         result = self._adapter.run_phase_step(session_id, step)
         if self._usage is not None and result.usage:

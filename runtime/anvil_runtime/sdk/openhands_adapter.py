@@ -31,6 +31,7 @@ class PhaseStep(BaseModel):
     instruction: str
     subtask: str | None = None
     output_paths: list[str] = Field(default_factory=list)
+    input_files: list[str] = Field(default_factory=list)
 
 
 class StepResult(BaseModel):
@@ -89,6 +90,123 @@ class InProcessBackend:
         )
 
 
+class LLMBackend:
+    """Real execution backend: generate artifact content via the LLM and write it.
+
+    Post-v0.1.0 integration. Implements :class:`OpenHandsBackend` by prompting the
+    configured :class:`OpenRouterProvider` and materializing the result to each of
+    the step's output paths. Document artifacts are written with the FR-AR-005
+    metadata header and the schema's required section headings so they pass
+    :class:`anvil_runtime.artifacts.validator.ArtifactValidator`; directory outputs
+    receive a generated ``GENERATED.md``.
+    """
+
+    def __init__(
+        self,
+        provider: "object",
+        workspace_root: str = ".",
+        clock: "object | None" = None,
+    ) -> None:
+        self._provider = provider
+        self._root = __import__("pathlib").Path(workspace_root)
+        self._counter = 0
+        self._sessions: dict[str, AgentRuntimeConfig] = {}
+        from datetime import datetime, timezone
+
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
+
+    def start(self, cfg: AgentRuntimeConfig) -> str:
+        self._counter += 1
+        session_id = f"llm-session-{self._counter}"
+        self._sessions[session_id] = cfg
+        return session_id
+
+    def run(self, session_id: str, step: PhaseStep) -> StepResult:
+        from anvil_runtime.llm.openrouter_provider import CompletionRequest
+
+        cfg = self._sessions.get(session_id)
+        model = cfg.model if cfg else "unknown"
+        prompt = self._build_prompt(step)
+        response = self._provider.complete(
+            CompletionRequest(
+                model=model, prompt=prompt, phase=step.phase, subtask=step.subtask
+            )
+        )
+        artifacts = self._write_artifacts(step, response.content)
+        return StepResult(
+            session_id=session_id,
+            phase=step.phase,
+            status="success",
+            output=response.content[:200],
+            artifacts=artifacts,
+            usage=response.usage,
+        )
+
+    def _build_prompt(self, step: PhaseStep) -> str:
+        sections = self._required_sections(step.phase)
+        lines = [
+            f"You are the '{step.phase}' phase agent in the Anvil coding factory.",
+            step.instruction,
+        ]
+        if step.input_files:
+            lines.append(f"Inputs: {', '.join(step.input_files)}.")
+        if sections:
+            lines.append(
+                "Produce Markdown that includes these section headings: "
+                + ", ".join(sections)
+                + "."
+            )
+        return "\n".join(lines)
+
+    def _write_artifacts(self, step: PhaseStep, content: str) -> list[str]:
+        import pathlib
+
+        written: list[str] = []
+        for rel in step.output_paths:
+            is_dir = rel.endswith("/") or pathlib.PurePosixPath(rel).suffix == ""
+            if is_dir:
+                directory = self._root / rel
+                directory.mkdir(parents=True, exist_ok=True)
+                gen_rel = str(pathlib.PurePosixPath(rel.rstrip("/")) / "GENERATED.md")
+                (self._root / gen_rel).write_text(
+                    self._document(step, content), encoding="utf-8"
+                )
+                written.append(gen_rel)
+            else:
+                target = self._root / rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if target.suffix == ".md":
+                    target.write_text(self._document(step, content), encoding="utf-8")
+                else:
+                    target.write_text(content, encoding="utf-8")
+                written.append(rel)
+        return written
+
+    def _document(self, step: PhaseStep, content: str) -> str:
+        import yaml
+
+        meta = {
+            "artifactId": f"{step.phase}-v1",
+            "phase": step.phase,
+            "generatedAt": self._clock().isoformat(),
+            "derivedFrom": list(step.input_files) or ["(none)"],
+        }
+        front = "---\n" + yaml.safe_dump(meta, sort_keys=False) + "---\n"
+        body = [f"# {step.phase.replace('-', ' ').title()}", "", "## Overview", content, ""]
+        for section in self._required_sections(step.phase):
+            body.append(f"## {section}")
+            body.append(content)
+            body.append("")
+        return front + "\n".join(body) + "\n"
+
+    @staticmethod
+    def _required_sections(phase: str) -> list[str]:
+        from anvil_runtime.artifacts.schemas import schema_for
+
+        schema = schema_for(phase)
+        return list(schema.required_sections) if schema else []
+
+
 class OpenHandsAdapter:
     """Bridges phase execution into OpenHands sessions and tools."""
 
@@ -111,4 +229,5 @@ __all__ = [
     "StepResult",
     "OpenHandsBackend",
     "InProcessBackend",
+    "LLMBackend",
 ]

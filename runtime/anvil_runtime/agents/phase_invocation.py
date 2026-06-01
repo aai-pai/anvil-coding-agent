@@ -55,4 +55,50 @@ def stub_phase_result(
     )
 
 
-__all__ = ["build_invocation_payload", "stub_phase_result"]
+# ---------------------------------------------------------------------------
+# Phase executors (post-v0.1.0 integration)
+# ---------------------------------------------------------------------------
+# The supervisor dispatches a phase through a PhaseExecutor so the same
+# orchestration can drive either the deterministic stub agents (default) or real
+# LLM-backed execution via the SessionBridge, without the supervisor knowing
+# which. The default executor preserves the exact v0.1.0 behavior.
+
+# Phases whose work is coding-heavy route to the coding model/subtask.
+_CODING_PHASES = frozenset({"implementation", "qa"})
+
+
+def subtask_for_phase(phase_id: str) -> str:
+    """Default subtask category for a phase (drives model routing)."""
+    return "coding" if phase_id in _CODING_PHASES else "planning"
+
+
+class DefaultExecutor:
+    """Executes a phase through the agent itself (deterministic stub by default)."""
+
+    def run(
+        self, agent: "BasePhaseAgent", payload: PhaseInvocationPayload
+    ) -> PhaseCompleteEvent:
+        return agent.run(payload)
+
+
+class BridgeExecutor:
+    """Executes a phase through a real :class:`SessionBridge` (LLM-backed)."""
+
+    def __init__(self, bridge: "object") -> None:
+        self._bridge = bridge
+
+    def run(
+        self, agent: "BasePhaseAgent", payload: PhaseInvocationPayload
+    ) -> PhaseCompleteEvent:
+        return self._bridge.execute_phase(
+            payload, subtask=subtask_for_phase(agent.phase_id)
+        )
+
+
+__all__ = [
+    "build_invocation_payload",
+    "stub_phase_result",
+    "DefaultExecutor",
+    "BridgeExecutor",
+    "subtask_for_phase",
+]
