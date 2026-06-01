@@ -193,8 +193,29 @@ Tests required in this slice:
 
 ### 2.4 Slice 4: API Surface and Extension Client
 
-Status: NOT STARTED
+Status: ✅ COMPLETED (2026-05-31)
 Execution Mode: SERIAL GATE (requires Slices 2 and 3 complete)
+
+Completion notes:
+- Runtime `/v1` surface: FastAPI app factory (`app.py`), dependency providers
+  (`api/deps.py`), and routers for runs/approve/override (`routes_runs.py`),
+  SSE events (`routes_events.py`), artifact lookup (`routes_artifacts.py`), and
+  health (`routes_health.py`), plus the runtime secret adapter with env fallback
+  (`security/secret_adapter.py`). All from the §8 matrix, no unmapped modules.
+- Extension thin client: typed `runtimeClient.ts`, `eventStreamClient.ts`
+  (SSE decoder), `healthProbe.ts`, chat `participant.ts`/`commandRouter.ts`/
+  `responseRenderer.ts`, UI `statusBar.ts`/`approvals.ts`/`escalationPrompt.ts`,
+  `secrets/secretStore.ts`/`redactionClient.ts`, and `telemetry/extensionLogger.ts`/
+  `eventMapper.ts`. `extension.ts` activation now registers the participant
+  (the Slice 1 scaffold explicitly deferred this wiring to Slice 4).
+- Python tests: 137 passed total (31 new); API package coverage ≈98% (routes
+  98–100%, deps 93%, secret_adapter 100%), overall 94% (≥80% API / ≥70% overall met).
+- Carry-forward: the TypeScript suites (`test_runtime_client.ts`,
+  `test_command_router.ts`) are written to spec but NOT executed here — Node.js/
+  npm remain unavailable in the authoring environment (Slice 1 carry-forward).
+  Policy/hook engines and the secret adapter are reachable but their dispatch
+  wiring lands in Slice 5 (OpenHands adapter / LLM routing).
+- Details: see `logs/implementation.log`.
 
 Objective:
 - Implement REST API routes and connect the VS Code participant client, including approvals and event streaming UX.

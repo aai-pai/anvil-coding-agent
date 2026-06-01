@@ -271,3 +271,108 @@ Tests:
   the API surface (Slice 4) and OpenHands adapter (Slice 5).
 - MCP server projection writes the resolved server list; live MCP discovery +
   tool authorization is Slice 5 (tools/*).
+
+---
+
+## Slice 4: API Surface and Extension Client
+
+- Date: 2026-05-31
+- Plan reference: docs/plan.md §2.4
+- Status: PASSED (Python suites green; TypeScript suites pending Node — see below)
+
+### Objective
+Expose the runtime as a localhost `/v1` REST + SSE service and build the VS Code
+thin client (chat participant, runtime clients, approval/escalation UI, secret
+storage bridge) that drives it.
+
+### Files created
+Runtime (Python):
+- anvil_runtime/app.py                    (FastAPI app factory; shared EventBus + DevelopmentManager on app.state; module-level `app` for uvicorn — blueprint §2.1)
+- anvil_runtime/api/deps.py               (get_manager/workspace_root/event_bus/secret_adapter providers)
+- anvil_runtime/api/routes_runs.py        (POST /v1/runs, GET /v1/runs/{id}, /approve [204], /override — blueprint §5.1 #1-4)
+- anvil_runtime/api/routes_events.py      (GET /v1/runs/{id}/events SSE; text/event-stream replay — #5)
+- anvil_runtime/api/routes_artifacts.py   (GET /v1/artifacts/{phase}: path/checksum/generatedAt — #6)
+- anvil_runtime/api/routes_health.py      (GET /v1/health: liveness + subsystem checks — #7)
+- anvil_runtime/security/__init__.py
+- anvil_runtime/security/secret_adapter.py (SecretAdapter: provided-key then OPENROUTER_API_KEY env — NFR-SC-001/002/003)
+
+Extension (TypeScript):
+- src/runtime/runtimeClient.ts            (RuntimeClient over injectable fetch; request/response interfaces mirror api/models.py — blueprint §3.2)
+- src/runtime/eventStreamClient.ts        (EventStreamClient + pure SseDecoder; EventEnvelope interface)
+- src/runtime/healthProbe.ts              (HealthProbe → single liveness verdict)
+- src/chat/commandRouter.ts               (pure parseCommand → typed ChatCommand)
+- src/chat/participant.ts                 (AnvilChatParticipant.handleRequest: command → RuntimeClient → Markdown)
+- src/chat/responseRenderer.ts            (pure Markdown renderers)
+- src/ui/statusBar.ts                     (StatusBar over vscode.StatusBarItem)
+- src/ui/approvals.ts                     (promptApproval → ApprovalRequest — blueprint §3.2)
+- src/ui/escalationPrompt.ts              (promptEscalation → recovery choice)
+- src/secrets/secretStore.ts              (SecretStore over vscode.SecretStorage — NFR-SC-001)
+- src/secrets/redactionClient.ts          (pure redactSecrets; spec §6.4 rule families — NFR-SC-003)
+- src/telemetry/extensionLogger.ts        (ExtensionLogger; redacts before writing)
+- src/telemetry/eventMapper.ts            (pure presentEvent / statusBarText)
+- src/extension.ts                        (MODIFIED: activation wires participant/status bar/logger/secret store — Slice 1 scaffold deferred this to Slice 4)
+
+Tests:
+- tests/unit/runtime/test_routes_validation.py    (422 body validation + 404 mapping)
+- tests/unit/runtime/test_secret_adapter.py       (precedence/env/None + repr never leaks)
+- tests/integration/api/test_runs_endpoints.py    (yolo completes, secure gating, approve/override/stop/rollback, 404)
+- tests/integration/api/test_events_stream.py     (SSE content-type, per-run payloads, 404)
+- tests/integration/api/test_health_endpoint.py   (status ok, runtime name, checks)
+- tests/integration/api/test_artifacts_endpoint.py(metadata, directory-only 404, not-generated 404, unknown 404)
+- tests/e2e/secure_mode_run/test_secure_approval_journey.py (4 mandatory gates in order → 12-phase completion; approval events)
+- tests/unit/extension/test_runtime_client.ts     (fake-fetch: method/url/body/parse/error/base-url normalize)
+- tests/unit/extension/test_command_router.ts     (start/approve/deny/override/status/health/help/unknown)
+
+### Test results
+- `python -m pytest tests` → 137 passed (31 new; 106 → 137).
+- Coverage (`--cov=anvil_runtime`): 94% overall. API package ≈98% — routes_runs 98%,
+  routes_events 100%, routes_artifacts 98%, routes_health 100%, deps 93% (get_secret_adapter
+  exercised in Slice 5), app.py 100%, secret_adapter 100% (≥80% API / ≥70% overall met).
+- TypeScript: NOT RUN — Node.js/npm unavailable (Slice 1 carry-forward). The two
+  vitest suites are written to spec and run wherever Node is present.
+
+### Design decisions (within blueprint/spec, no drift)
+- Orchestration over HTTP is synchronous and deterministic: state-changing routes
+  (start, granted approval, force-advance, rollback) drive `run_until_pause` so the
+  supervisor advances to the next gate/escalation/stop/completion before responding.
+  A denied approval and `stop` deliberately do not advance.
+- SSE route replays the run's persisted event snapshot (`EventBus.stream`) then
+  closes — deterministic and TestClient-friendly. Live tailing via `EventBus.subscribe`
+  is a later iteration on the same contract; the app shares one EventBus between the
+  supervisor and the stream route so they cannot diverge.
+- `/v1/health` honestly reports `config: ok` and `mcp_discovery/openhands: pending`
+  (Slice 5 subsystems) rather than faking the blueprint's all-`ok` illustrative example;
+  overall status is `ok` unless a check is `error`.
+- `/v1/artifacts/{phase}` resolves the phase's first file-shaped `allowed_output` from
+  PHASE_CONTRACTS; directory-only phases (e.g. implementation→src/) and ungenerated
+  artifacts return 404.
+- TS request/response/event interfaces and helper types (FetchLike, SseDecoder,
+  ChatCommand, EventPresentation, etc.) are colocated inside their assigned matrix
+  modules — no new module files introduced (same approach as Slices 2/3).
+
+### Issues encountered and fixes
+- routes_artifacts initially at 40% line coverage (only the unknown-phase 404 was
+  tested). Added tests/integration/api/test_artifacts_endpoint.py covering the happy
+  path + the directory-only and not-generated 404 branches → ≈98%. No functional changes.
+- All Python suites passed on the first full run after authoring; no retries needed.
+
+### Drift check (against blueprint / architecture / spec)
+- Modules created == the Slice-4 rows of the plan §8 assignment matrix
+  (app.py; api/{deps,routes_runs,routes_events,routes_artifacts,routes_health};
+  security/secret_adapter; extension chat/runtime/ui/secrets/telemetry modules).
+  No unmapped source modules.
+- extension/src/extension.ts (a Slice 1 module) was MODIFIED to register the chat
+  participant — explicitly anticipated by the Slice 1 scaffold's own comments and
+  plan §2.1; this is planned activation wiring, not drift. The protected shared
+  contract files (phase_contracts.py, api/models.py, config/schema.py) were consumed,
+  not modified.
+- Endpoints, request/response shapes, and constants match blueprint §5.1/§6.2 and
+  api/models.py verbatim. No drift detected.
+
+### Carry-forward
+- TypeScript build/test still require Node.js (Slice 1 carry-forward), now covering
+  the full extension client and its two vitest suites. Run before final sign-off.
+- The secret adapter and policy/hook engines are reachable but not yet on the
+  execution path; LLM/tool dispatch wiring is Slice 5 (sdk/* + llm/* + tools/*).
+- Live SSE tailing (vs. snapshot replay) is a non-blocking enhancement on the
+  existing EventBus.subscribe contract.
