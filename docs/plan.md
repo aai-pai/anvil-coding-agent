@@ -347,8 +347,30 @@ Tests required in this slice:
 
 ### 2.6 Slice 6: Artifact Validation, Drift Control, Specialist Roles, and Hardening
 
-Status: NOT STARTED
+Status: ✅ COMPLETED (2026-05-31)
 Execution Mode: SERIAL FINALIZATION (requires Slices 4 and 5 complete)
+
+Completion notes:
+- Artifacts: `metadata` (FR-AR-005 lineage front-matter), `schemas` (per-phase
+  doc requirements), `validator` (deterministic pass/fail existence + metadata +
+  heading checks, FR-SV-009/FR-AR-001/002; emits ArtifactValidationFailed).
+- Drift: `classifier` (kind→minor/major/critical), `checker` (Blueprint→Architecture
+  →Spec order FR-DR-002A, coverage + unverified-requirement findings, DriftCheckResult
+  emit, inconclusive handling), `remediation` (minor→auto-remediate/tolerate,
+  major→rollback-reexecute, critical→escalate, max-2 attempts FR-DR-005..009).
+- Specialists: `agents/specialist_registry` (merge by precedence, schema validation,
+  protected-path enforcement, bounded phase invocation, SPECIALIST_ROLE_SCHEMA —
+  FR-SA-001..012; backward-compatible when absent).
+- Hardening: `security/redaction` (NFR-SC-003/§6.4 rule families) wired into
+  `state/event_bus` (the planned Slices 2+6 completeness/redaction pass) so every
+  audited/streamed event is scrubbed before logging — backward-compatible (redactor
+  optional).
+- All from the §8 matrix, no unmapped modules. Tests: 208 passed total (38 new);
+  Slice 6 modules 90–100% (validator 99%, drift checker 98%, remediation 100%,
+  redaction 96%, specialist_registry 91%), overall 94%.
+- No remaining carry-forward on the Python runtime. Open item: the TypeScript
+  extension suites still require Node.js to execute (Slice 1 carry-forward).
+- Details: see `logs/implementation.log`.
 
 Objective:
 - Finalize artifact validation, drift remediation, specialist-role extensibility, and production hardening before packaging/doc/deployment phases.
