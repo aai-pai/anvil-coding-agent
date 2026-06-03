@@ -26,9 +26,11 @@ export function activate(context: vscode.ExtensionContext): void {
   const participant = new AnvilChatParticipant(client);
 
   const handler: vscode.ChatRequestHandler = async (request, _ctx, stream) => {
+    // Build into the folder the user has open in VS Code, when there is one.
+    const workspace = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     const response = await participant.handleRequest(
       request.prompt,
-      { requesterId: "vscode-user" },
+      { requesterId: "vscode-user", workspace },
       (message) => stream.progress(message), // live per-phase progress
     );
     stream.markdown(response.markdown);

@@ -31,6 +31,9 @@ class RunStartRequest(BaseModel):
     # domain-knowledge file so the proposal phase builds *this* instead of needing
     # the file to be edited by hand (conversational "@anvil build ..." flow).
     task: str | None = None
+    # Optional per-run output directory. When set, this run's artifacts are written
+    # here (e.g. the folder open in VS Code) instead of the server's default root.
+    workspace: str | None = None
 
 
 class RunStarted(BaseModel):

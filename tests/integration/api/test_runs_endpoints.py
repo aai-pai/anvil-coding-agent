@@ -78,6 +78,34 @@ def test_advance_unknown_run_returns_404(client: TestClient) -> None:
     assert client.post("/v1/runs/ghost/advance").status_code == 404
 
 
+def test_per_run_workspace_writes_to_chosen_folder(tmp_path: pathlib.Path) -> None:
+    # Default server workspace is one folder; the run targets another.
+    server_root = tmp_path / "server"
+    project = tmp_path / "my-project"
+    client = TestClient(create_app(workspace_root=str(server_root)))
+
+    resp = client.post(
+        "/v1/runs",
+        json={
+            "mode": "yolo",
+            "security_profile": "open",
+            "task": "build a converter",
+            "workspace": str(project),
+        },
+    )
+    assert resp.status_code == 201
+    run_id = resp.json()["run_id"]
+
+    # The task + run state land in the chosen project folder, not the server root.
+    assert (project / "domain-knowledge" / "background-information.md").is_file()
+    assert not (server_root / "domain-knowledge").exists()
+
+    # Run-scoped routes resolve to the per-run manager.
+    state = client.get(f"/v1/runs/{run_id}").json()
+    assert state["status"] == "completed"
+    assert len(state["completed_phases"]) == 12
+
+
 def test_yolo_run_completes_through_all_phases(client: TestClient) -> None:
     run_id = _start(client, mode="yolo")
     state = client.get(f"/v1/runs/{run_id}").json()

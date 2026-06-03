@@ -24,6 +24,8 @@ import type {
 export interface ChatContext {
   /** The id recorded as the requester on approvals/overrides. */
   requesterId: string;
+  /** The open VS Code folder; runs build into it when present. */
+  workspace?: string;
 }
 
 export interface ChatResponse {
@@ -101,6 +103,7 @@ export class AnvilChatParticipant {
             mode: command.mode,
             security_profile: command.securityProfile,
             phase_gates: command.extraGates,
+            workspace: context.workspace,
           },
           progress
         );
@@ -108,13 +111,22 @@ export class AnvilChatParticipant {
       }
       case "build": {
         // Conversational flow: the task comes straight from chat. The runtime
-        // writes it to domain-knowledge, then runs autonomously (yolo/open).
+        // writes it to domain-knowledge, then runs autonomously (yolo/open),
+        // building into the open VS Code folder when there is one.
         const { started, state } = await this.runWithProgress(
-          { mode: "yolo", security_profile: "open", task: command.description },
+          {
+            mode: "yolo",
+            security_profile: "open",
+            task: command.description,
+            workspace: context.workspace,
+          },
           progress
         );
+        const where = context.workspace
+          ? `\n📁 into \`${context.workspace}\``
+          : "";
         return (
-          `🛠️ Building: _${command.description}_\n\n` +
+          `🛠️ Building: _${command.description}_${where}\n\n` +
           `${renderRunStarted(started)}\n\n${renderRunState(state)}`
         );
       }

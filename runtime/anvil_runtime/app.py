@@ -97,6 +97,30 @@ def _build_real_manager(
     )
 
 
+class RunHandle:
+    """A run's manager + event bus + workspace (per-run, possibly client-chosen)."""
+
+    def __init__(self, manager: DevelopmentManager, event_bus: EventBus, workspace_root: str) -> None:
+        self.manager = manager
+        self.event_bus = event_bus
+        self.workspace_root = workspace_root
+
+
+def build_manager(
+    workspace_root: str,
+    execution_mode: str,
+    config: EffectiveConfig | None,
+    secret_adapter: SecretAdapter,
+) -> tuple[DevelopmentManager, EventBus]:
+    """Build a manager + its event bus rooted at ``workspace_root`` for a mode."""
+    bus = EventBus(workspace_root)
+    if execution_mode == "stub":
+        manager = DevelopmentManager(workspace_root=workspace_root, config=config, event_bus=bus)
+    else:
+        manager = _build_real_manager(workspace_root, config, bus, secret_adapter, execution_mode)
+    return manager, bus
+
+
 def create_app(
     workspace_root: str = ".",
     config: EffectiveConfig | None = None,
@@ -129,6 +153,10 @@ def create_app(
     app.state.manager = mgr
     app.state.secret_adapter = secrets
     app.state.execution_mode = mode
+    app.state.config = config
+    # Default handle + per-run registry (per-run client-chosen workspaces).
+    app.state.default_handle = RunHandle(mgr, bus, workspace_root)
+    app.state.runs = {}
 
     app.include_router(routes_runs.router)
     app.include_router(routes_events.router)

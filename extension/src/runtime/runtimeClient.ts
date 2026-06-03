@@ -18,6 +18,8 @@ export interface RunStartRequest {
   run_overrides?: Record<string, unknown>;
   /** Free-form task; the runtime writes it to domain-knowledge before the run. */
   task?: string;
+  /** Per-run output folder (e.g. the open VS Code folder); defaults to server root. */
+  workspace?: string;
 }
 
 export interface RunStarted {

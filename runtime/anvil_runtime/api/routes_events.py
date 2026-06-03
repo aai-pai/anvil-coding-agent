@@ -15,7 +15,7 @@ from typing import Iterator
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 
-from anvil_runtime.api.deps import get_event_bus, get_manager
+from anvil_runtime.api.deps import get_run_event_bus, get_run_manager
 from anvil_runtime.core.development_manager import DevelopmentManager
 from anvil_runtime.state.event_bus import EventBus
 
@@ -27,8 +27,8 @@ SSE_MEDIA_TYPE = "text/event-stream"
 @router.get("/{run_id}/events")
 def stream_events(
     run_id: str,
-    manager: DevelopmentManager = Depends(get_manager),
-    event_bus: EventBus = Depends(get_event_bus),
+    manager: DevelopmentManager = Depends(get_run_manager),
+    event_bus: EventBus = Depends(get_run_event_bus),
 ) -> StreamingResponse:
     """Stream the run's audit events as SSE (``EventEnvelope`` JSON per message)."""
     try:
