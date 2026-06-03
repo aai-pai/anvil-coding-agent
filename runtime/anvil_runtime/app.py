@@ -71,9 +71,19 @@ def _build_real_manager(
         # key check passes without requiring a real credential.
         secrets = SecretAdapter(provided_key="offline")
     provider = OpenRouterProvider(secret_adapter=secrets, transport=transport)
+    # The spec's placeholder model names (gemma-4 / deepseek-coder) are not real
+    # OpenRouter IDs. Map every subtask to a real, configurable model so `real`
+    # mode works out of the box. Override per category via env if desired.
+    default_model = os.environ.get("ANVIL_MODEL", "deepseek/deepseek-chat")
+    planning_model = os.environ.get("ANVIL_PLANNING_MODEL", default_model)
+    coding_model = os.environ.get("ANVIL_CODING_MODEL", default_model)
+    subtask_models = {
+        "planning": planning_model, "analysis": planning_model, "review": planning_model,
+        "coding": coding_model, "debugging": coding_model,
+    }
     bridge = SessionBridge(
         adapter=OpenHandsAdapter(backend=LLMBackend(provider, workspace_root)),
-        model_router=ModelRouter(event_bus=bus),
+        model_router=ModelRouter(subtask_models=subtask_models, event_bus=bus),
         usage_tracker=UsageTracker(budgets=cfg.tokenBudgetPerPhase, event_bus=bus),
         security_profile=cfg.securityProfile,
         workspace_root=workspace_root,
