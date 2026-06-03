@@ -16,3 +16,6 @@ dist/
 node_modules/
 extension/dist/
 *.tsbuildinfo
+
+# VS Code extension package
+extension/*.vsix
