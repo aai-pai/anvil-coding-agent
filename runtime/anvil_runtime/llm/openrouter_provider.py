@@ -70,15 +70,20 @@ class HttpxTransport:
     request shaping is testable without network access.
     """
 
+    # Status codes worth retrying (rate limit / transient upstream errors).
+    _RETRYABLE = frozenset({429, 502, 503, 504})
+
     def __init__(
         self,
         base_url: str = OPENROUTER_BASE_URL,
-        timeout_seconds: float = 60.0,
+        timeout_seconds: float = 90.0,
         client: object | None = None,
+        max_retries: int = 4,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout_seconds
         self._client = client  # an httpx.Client-like object; lazily created if None
+        self._max_retries = max_retries
 
     def complete(self, request: CompletionRequest, api_key: str) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -95,17 +100,30 @@ class HttpxTransport:
         return self._normalize(data)
 
     def _post(self, url: str, payload: dict, headers: dict) -> dict:
-        client = self._client
-        if client is None:
-            import httpx  # imported lazily so offline runs never need the dep loaded
+        import time
 
-            with httpx.Client(timeout=self._timeout) as owned:
-                response = owned.post(url, json=payload, headers=headers)
-                response.raise_for_status()
-                return response.json()
-        response = client.post(url, json=payload, headers=headers)
-        response.raise_for_status()
-        return response.json()
+        last_response = None
+        for attempt in range(self._max_retries + 1):
+            response = self._send(url, payload, headers)
+            status = getattr(response, "status_code", 200)
+            if status in self._RETRYABLE and attempt < self._max_retries:
+                last_response = response
+                time.sleep(min(2 ** attempt, 8))  # 1s, 2s, 4s, 8s backoff
+                continue
+            response.raise_for_status()
+            return response.json()
+        # Exhausted retries on a retryable status: surface the last error.
+        if last_response is not None:
+            last_response.raise_for_status()
+        raise RuntimeError("OpenRouter request failed")
+
+    def _send(self, url: str, payload: dict, headers: dict):
+        if self._client is not None:
+            return self._client.post(url, json=payload, headers=headers)
+        import httpx  # imported lazily so offline runs never need the dep loaded
+
+        with httpx.Client(timeout=self._timeout) as owned:
+            return owned.post(url, json=payload, headers=headers)
 
     @staticmethod
     def _normalize(data: dict) -> dict[str, object]:
