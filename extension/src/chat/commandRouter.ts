@@ -22,6 +22,7 @@ export type ChatCommand =
       securityProfile: SecurityProfile;
       extraGates: string[];
     }
+  | { kind: "build"; description: string }
   | { kind: "approve"; comments?: string }
   | { kind: "deny"; comments?: string }
   | { kind: "status" }
@@ -54,6 +55,14 @@ export function parseCommand(raw: string): ChatCommand {
     case "start":
     case "run":
       return parseStart(rest);
+    case "build":
+    case "make":
+    case "create": {
+      const description = rest.join(" ").trim();
+      return description
+        ? { kind: "build", description }
+        : { kind: "help" };
+    }
     case "approve":
     case "yes":
       return { kind: "approve", comments: joinOrUndefined(rest) };

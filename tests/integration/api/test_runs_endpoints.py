@@ -32,6 +32,23 @@ def _start(client: TestClient, mode: str = "gated", profile: str = "restricted")
     return body["run_id"]
 
 
+def test_task_in_request_is_written_to_domain_knowledge(
+    client: TestClient, tmp_path: pathlib.Path
+) -> None:
+    resp = client.post(
+        "/v1/runs",
+        json={
+            "mode": "yolo",
+            "security_profile": "open",
+            "task": "build a CLI calculator",
+        },
+    )
+    assert resp.status_code == 201
+    dk = tmp_path / "domain-knowledge" / "background-information.md"
+    assert dk.is_file()
+    assert "build a CLI calculator" in dk.read_text(encoding="utf-8")
+
+
 def test_yolo_run_completes_through_all_phases(client: TestClient) -> None:
     run_id = _start(client, mode="yolo")
     state = client.get(f"/v1/runs/{run_id}").json()

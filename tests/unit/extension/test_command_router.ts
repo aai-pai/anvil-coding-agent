@@ -39,6 +39,29 @@ describe("parseCommand: start", () => {
   });
 });
 
+describe("parseCommand: build", () => {
+  it("captures the full free-form description", () => {
+    expect(parseCommand("build a CLI that converts Celsius to Fahrenheit")).toEqual({
+      kind: "build",
+      description: "a CLI that converts Celsius to Fahrenheit",
+    });
+  });
+
+  it("accepts make/create aliases and a leading slash", () => {
+    expect(parseCommand("/make a todo list app")).toEqual({
+      kind: "build",
+      description: "a todo list app",
+    });
+    expect(parseCommand("create a password generator")).toMatchObject({
+      kind: "build",
+    });
+  });
+
+  it("falls back to help when no description is given", () => {
+    expect(parseCommand("build")).toEqual({ kind: "help" });
+  });
+});
+
 describe("parseCommand: approvals", () => {
   it("parses approve with a comment", () => {
     expect(parseCommand("approve looks good to me")).toEqual({

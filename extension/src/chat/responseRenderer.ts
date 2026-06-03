@@ -51,7 +51,8 @@ export function renderEvent(event: EventEnvelope): string {
 export function renderHelp(): string {
   return [
     "**Anvil commands**",
-    "- `start [mode] [profile] [gates…]` — begin a run (e.g. `start secure restricted`)",
+    "- `build <description>` — build something from a plain-English description (e.g. `build a CLI that converts Celsius to Fahrenheit`)",
+    "- `start [mode] [profile] [gates…]` — begin a run from the domain-knowledge file (e.g. `start secure restricted`)",
     "- `status` — show the current run state",
     "- `approve [comment]` / `deny [comment]` — resolve the pending gate",
     "- `rollback <phase> [reason]` — roll back to a phase",

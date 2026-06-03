@@ -27,6 +27,10 @@ class RunStartRequest(BaseModel):
     security_profile: Literal["open", "restricted", "strict"]
     phase_gates: list[str] = Field(default_factory=list)
     run_overrides: dict[str, object] = Field(default_factory=dict)
+    # Optional free-form task. When set, the runtime writes it to the workspace's
+    # domain-knowledge file so the proposal phase builds *this* instead of needing
+    # the file to be edited by hand (conversational "@anvil build ..." flow).
+    task: str | None = None
 
 
 class RunStarted(BaseModel):

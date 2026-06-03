@@ -16,6 +16,8 @@ export interface RunStartRequest {
   security_profile: string;
   phase_gates?: string[];
   run_overrides?: Record<string, unknown>;
+  /** Free-form task; the runtime writes it to domain-knowledge before the run. */
+  task?: string;
 }
 
 export interface RunStarted {

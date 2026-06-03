@@ -62,6 +62,21 @@ export class AnvilChatParticipant {
         const state = await this.client.getRun(started.run_id);
         return `${renderRunStarted(started)}\n\n${renderRunState(state)}`;
       }
+      case "build": {
+        // Conversational flow: the task comes straight from chat. The runtime
+        // writes it to domain-knowledge, then runs autonomously (yolo/open).
+        const started = await this.client.startRun({
+          mode: "yolo",
+          security_profile: "open",
+          task: command.description,
+        });
+        this.activeRunId = started.run_id;
+        const state = await this.client.getRun(started.run_id);
+        return (
+          `🛠️ Building: _${command.description}_\n\n` +
+          `${renderRunStarted(started)}\n\n${renderRunState(state)}`
+        );
+      }
       case "status": {
         const runId = this.requireRun();
         return renderRunState(await this.client.getRun(runId));

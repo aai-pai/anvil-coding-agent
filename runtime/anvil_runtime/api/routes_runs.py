@@ -11,9 +11,11 @@ next gate, escalation, stop, or completion before responding.
 
 from __future__ import annotations
 
+import pathlib
+
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 
-from anvil_runtime.api.deps import get_manager
+from anvil_runtime.api.deps import get_manager, get_workspace_root
 from anvil_runtime.api.models import (
     ApprovalRequest,
     OverrideRequest,
@@ -38,12 +40,27 @@ def _to_state_response(progress: RunProgress) -> RunStateResponse:
     )
 
 
+DOMAIN_KNOWLEDGE_FILE = "domain-knowledge/background-information.md"
+
+
 @router.post("", response_model=RunStarted, status_code=status.HTTP_201_CREATED)
 def start_run(
     request: RunStartRequest,
     manager: DevelopmentManager = Depends(get_manager),
+    workspace_root: str = Depends(get_workspace_root),
 ) -> RunStarted:
-    """``POST /v1/runs`` — start a run and advance to the first pause point."""
+    """``POST /v1/runs`` — start a run and advance to the first pause point.
+
+    When ``task`` is supplied, it is written to the workspace's domain-knowledge
+    file first so the proposal phase builds that task (the conversational
+    ``@anvil build ...`` flow), with no manual file editing.
+    """
+    if request.task:
+        target = pathlib.Path(workspace_root) / DOMAIN_KNOWLEDGE_FILE
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            f"# Project Request\n\n{request.task.strip()}\n", encoding="utf-8"
+        )
     started = manager.start_run(request)
     manager.run_until_pause(started.run_id)
     return started
