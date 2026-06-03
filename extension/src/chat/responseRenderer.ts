@@ -35,6 +35,24 @@ export function renderRunState(state: RunStateResponse): string {
   return lines.join("\n");
 }
 
+const TOTAL_PHASES = 12;
+
+/** A short, live one-line progress message for a run in flight (Level 2). */
+export function renderProgress(state: RunStateResponse): string {
+  const done = state.completed_phases.length;
+  if (state.status === "completed") {
+    return `Anvil: all ${TOTAL_PHASES} phases complete ✓`;
+  }
+  if (state.pending_approval_gate) {
+    return `Anvil: paused for approval — ${state.pending_approval_gate}`;
+  }
+  if (state.status === "escalated") {
+    return `Anvil: escalated at ${state.current_phase ?? "?"}`;
+  }
+  const current = state.current_phase ? ` — ${state.current_phase}` : "";
+  return `Anvil: ${done}/${TOTAL_PHASES} phases${current}`;
+}
+
 /** Result line for an override action. */
 export function renderOverrideResult(result: OverrideResult): string {
   const target = result.targetPhase ? ` → ${result.targetPhase}` : "";

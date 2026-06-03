@@ -87,6 +87,33 @@ describe("RuntimeClient.getRun", () => {
   });
 });
 
+describe("RuntimeClient deferred runs", () => {
+  it("startRun with defer appends the query param", async () => {
+    const calls: string[] = [];
+    const fetchImpl: FetchLike = async (url) => {
+      calls.push(url);
+      return jsonResponse(201, { run_id: "r1", started_at: "t", mode: "yolo" });
+    };
+    const client = new RuntimeClient(BASE, fetchImpl);
+    await client.startRun({ mode: "yolo", security_profile: "open" }, { defer: true });
+    expect(calls[0]).toBe(`${BASE}/v1/runs?defer=true`);
+  });
+
+  it("advance POSTs to the advance endpoint and parses state", async () => {
+    const fetchImpl: FetchLike = async () =>
+      jsonResponse(200, {
+        run_id: "r1",
+        status: "running",
+        current_phase: "specification",
+        completed_phases: ["proposal"],
+        pending_approval_gate: null,
+      });
+    const client = new RuntimeClient(BASE, fetchImpl);
+    const state = await client.advance("r1");
+    expect(state.completed_phases).toEqual(["proposal"]);
+  });
+});
+
 describe("RuntimeClient.approve", () => {
   it("POSTs the approval and tolerates a 204 with no body", async () => {
     const fetchImpl: FetchLike = async () => noContentResponse();

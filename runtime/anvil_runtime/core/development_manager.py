@@ -296,27 +296,41 @@ class DevelopmentManager:
 
     # -- orchestration loop ----------------------------------------------
 
+    def step(self, run_id: str) -> RunProgress:
+        """Advance exactly one phase (or stop at a gate/completion).
+
+        One iteration of the orchestration loop, exposed so a client can drive
+        the run phase-by-phase and stream progress between phases (Level 2).
+        """
+        ctx = self._require_run(run_id)
+        if ctx.status != "running":
+            return self._progress(ctx)
+        next_phase = self._dag.next_phase(ctx.completed)
+        if next_phase is None:
+            ctx.status = "completed"
+            self._emit(run_id, "RunCompleted", "")
+            return self._progress(ctx)
+        # Pre-phase gate (e.g., pre-deployment).
+        pre_gate = ctx.pre_gates.get(next_phase)
+        if pre_gate and not self._gate_satisfied(ctx, pre_gate):
+            return self._pause_for_gate(ctx, pre_gate, next_phase)
+        result = self._dispatch_with_retries(ctx, next_phase)
+        if result.status == "escalated":
+            ctx.status = "escalated"
+            return self._progress(ctx, current_phase=next_phase)
+        # Post-phase gate (e.g., post-proposal).
+        post_gate = ctx.post_gates.get(next_phase)
+        if post_gate and not self._gate_satisfied(ctx, post_gate):
+            return self._pause_for_gate(ctx, post_gate, next_phase)
+        return self._progress(ctx)
+
     def run_until_pause(self, run_id: str) -> RunProgress:
         """Advance phases serially until a gate, escalation, stop, or completion."""
         ctx = self._require_run(run_id)
         while ctx.status == "running":
-            next_phase = self._dag.next_phase(ctx.completed)
-            if next_phase is None:
-                ctx.status = "completed"
-                self._emit(run_id, "RunCompleted", "")
-                break
-            # Pre-phase gate (e.g., pre-deployment).
-            pre_gate = ctx.pre_gates.get(next_phase)
-            if pre_gate and not self._gate_satisfied(ctx, pre_gate):
-                return self._pause_for_gate(ctx, pre_gate, next_phase)
-            result = self._dispatch_with_retries(ctx, next_phase)
-            if result.status == "escalated":
-                ctx.status = "escalated"
-                return self._progress(ctx, current_phase=next_phase)
-            # Post-phase gate (e.g., post-proposal).
-            post_gate = ctx.post_gates.get(next_phase)
-            if post_gate and not self._gate_satisfied(ctx, post_gate):
-                return self._pause_for_gate(ctx, post_gate, next_phase)
+            progress = self.step(run_id)
+            if ctx.status != "running":
+                return progress
         return self._progress(ctx)
 
     def _dispatch_with_retries(self, ctx: _RunContext, phase_id: str) -> PhaseDispatchResult:

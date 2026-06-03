@@ -26,9 +26,11 @@ export function activate(context: vscode.ExtensionContext): void {
   const participant = new AnvilChatParticipant(client);
 
   const handler: vscode.ChatRequestHandler = async (request, _ctx, stream) => {
-    const response = await participant.handleRequest(request.prompt, {
-      requesterId: "vscode-user",
-    });
+    const response = await participant.handleRequest(
+      request.prompt,
+      { requesterId: "vscode-user" },
+      (message) => stream.progress(message), // live per-phase progress
+    );
     stream.markdown(response.markdown);
     if (participant.currentRunId) {
       try {

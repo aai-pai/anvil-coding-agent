@@ -107,9 +107,13 @@ export class RuntimeClient {
       fetchImpl ?? ((globalThis as { fetch?: FetchLike }).fetch as FetchLike);
   }
 
-  /** POST /v1/runs — start a run; the runtime advances to the first pause. */
-  async startRun(request: RunStartRequest): Promise<RunStarted> {
-    return this.requestJson<RunStarted>("POST", "/v1/runs", request);
+  /** POST /v1/runs — start a run. With `defer`, the caller drives it via advance(). */
+  async startRun(
+    request: RunStartRequest,
+    opts?: { defer?: boolean }
+  ): Promise<RunStarted> {
+    const path = opts?.defer ? "/v1/runs?defer=true" : "/v1/runs";
+    return this.requestJson<RunStarted>("POST", path, request);
   }
 
   /** GET /v1/runs/{run_id} — current status, phase, and pending gate. */
@@ -117,6 +121,14 @@ export class RuntimeClient {
     return this.requestJson<RunStateResponse>(
       "GET",
       `/v1/runs/${encodeURIComponent(runId)}`
+    );
+  }
+
+  /** POST /v1/runs/{run_id}/advance — advance a deferred run by one phase. */
+  async advance(runId: string): Promise<RunStateResponse> {
+    return this.requestJson<RunStateResponse>(
+      "POST",
+      `/v1/runs/${encodeURIComponent(runId)}/advance`
     );
   }
 

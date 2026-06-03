@@ -49,6 +49,35 @@ def test_task_in_request_is_written_to_domain_knowledge(
     assert "build a CLI calculator" in dk.read_text(encoding="utf-8")
 
 
+def test_deferred_run_advances_one_phase_at_a_time(client: TestClient) -> None:
+    # defer=true starts the run without advancing it (for live progress streaming).
+    run_id = client.post(
+        "/v1/runs?defer=true", json={"mode": "yolo", "security_profile": "open"}
+    ).json()["run_id"]
+    initial = client.get(f"/v1/runs/{run_id}").json()
+    assert initial["status"] == "running"
+    assert initial["completed_phases"] == []
+
+    # Each advance completes exactly one more phase.
+    first = client.post(f"/v1/runs/{run_id}/advance").json()
+    assert first["completed_phases"] == ["proposal"]
+    second = client.post(f"/v1/runs/{run_id}/advance").json()
+    assert second["completed_phases"] == ["proposal", "factory-init"]
+
+    # Drive to completion.
+    state = second
+    for _ in range(20):
+        if state["status"] == "completed":
+            break
+        state = client.post(f"/v1/runs/{run_id}/advance").json()
+    assert state["status"] == "completed"
+    assert len(state["completed_phases"]) == 12
+
+
+def test_advance_unknown_run_returns_404(client: TestClient) -> None:
+    assert client.post("/v1/runs/ghost/advance").status_code == 404
+
+
 def test_yolo_run_completes_through_all_phases(client: TestClient) -> None:
     run_id = _start(client, mode="yolo")
     state = client.get(f"/v1/runs/{run_id}").json()

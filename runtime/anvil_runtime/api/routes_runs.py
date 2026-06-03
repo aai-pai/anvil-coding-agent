@@ -48,12 +48,17 @@ def start_run(
     request: RunStartRequest,
     manager: DevelopmentManager = Depends(get_manager),
     workspace_root: str = Depends(get_workspace_root),
+    defer: bool = False,
 ) -> RunStarted:
     """``POST /v1/runs`` — start a run and advance to the first pause point.
 
     When ``task`` is supplied, it is written to the workspace's domain-knowledge
     file first so the proposal phase builds that task (the conversational
     ``@anvil build ...`` flow), with no manual file editing.
+
+    When ``defer=true`` (query param) the run is created but NOT advanced — the
+    caller drives it phase-by-phase via ``POST /v1/runs/{run_id}/advance`` to
+    stream live progress (Level 2). Default runs to the first pause synchronously.
     """
     if request.task:
         target = pathlib.Path(workspace_root) / DOMAIN_KNOWLEDGE_FILE
@@ -62,8 +67,28 @@ def start_run(
             f"# Project Request\n\n{request.task.strip()}\n", encoding="utf-8"
         )
     started = manager.start_run(request)
-    manager.run_until_pause(started.run_id)
+    if not defer:
+        manager.run_until_pause(started.run_id)
     return started
+
+
+@router.post("/{run_id}/advance", response_model=RunStateResponse)
+def advance(
+    run_id: str,
+    manager: DevelopmentManager = Depends(get_manager),
+) -> RunStateResponse:
+    """``POST /v1/runs/{run_id}/advance`` — advance the run by one phase.
+
+    Returns the updated run state. Used by clients that drive a deferred run
+    phase-by-phase to show live progress.
+    """
+    try:
+        progress = manager.step(run_id)
+    except KeyError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Unknown run '{run_id}'"
+        )
+    return _to_state_response(progress)
 
 
 @router.get("/{run_id}", response_model=RunStateResponse)
