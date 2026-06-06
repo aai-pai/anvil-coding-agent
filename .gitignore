@@ -1,2 +1,21 @@
 # Local scratch and external clones
 /temp/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Node / TypeScript
+node_modules/
+extension/dist/
+*.tsbuildinfo
+
+# VS Code extension package
+extension/*.vsix

@@ -1,0 +1,43 @@
+{
+  "name": "anvil-extension",
+  "displayName": "Anvil",
+  "description": "Anvil VS Code chat participant: thin client for the local Anvil runtime coding factory.",
+  "version": "0.1.0",
+  "publisher": "anvil",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aai-pai/openhands_based_coding_team"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "chatParticipants": [
+      {
+        "id": "anvil.chat",
+        "name": "anvil",
+        "description": "Run and supervise the Anvil coding factory.",
+        "isSticky": true
+      }
+    ]
+  },
+  "scripts": {
+    "build": "tsc -p ./",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  }
+}

@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "anvil-runtime"
+version = "0.1.0"
+description = "Anvil localhost runtime service: supervisor-orchestrated coding factory built on OpenHands + OpenRouter."
+readme = "../README.md"
+requires-python = ">=3.9"
+license = { text = "Proprietary" }
+authors = [{ name = "Anvil" }]
+dependencies = [
+    "pydantic>=2,<3",
+    "fastapi>=0.110",
+    "httpx>=0.27",
+    "uvicorn>=0.27",
+    "pyyaml>=6",
+    # PEP 604 (`X | None`) / PEP 585 annotations are used per blueprint. The
+    # spec targets Python 3.12 where these evaluate natively; this backport keeps
+    # the same source runnable on 3.9 interpreters without altering the syntax.
+    "eval_type_backport; python_version < '3.10'",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7",
+    "pytest-cov>=4",
+    "httpx>=0.27",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["anvil_runtime*"]
+
+[tool.pytest.ini_options]
+# Tests live at the repo root under tests/; the runtime package is importable
+# because this project is installed (or runtime/ is on sys.path via conftest).
+testpaths = ["../tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[tool.coverage.run]
+source = ["anvil_runtime"]
+branch = true
