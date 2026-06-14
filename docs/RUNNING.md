@@ -40,11 +40,25 @@ ANVIL_EXECUTION_MODE=real \
   python -m uvicorn anvil_runtime.app:app --host 127.0.0.1 --port 8765
 ```
 
+Model routing defaults in this repo:
+
+- `ANVIL_PLANNING_MODEL=google/gemma-4-26b-a4b-it` (planning/analysis/review)
+- `ANVIL_CODING_MODEL=deepseek/deepseek-v4-flash` (coding/debugging)
+
+Override models explicitly (Linux/macOS):
+
+```bash
+export ANVIL_PLANNING_MODEL=google/gemma-4-26b-a4b-it
+export ANVIL_CODING_MODEL=deepseek/deepseek-v4-flash
+```
+
 On Windows PowerShell, set env vars first:
 
 ```powershell
 $env:ANVIL_EXECUTION_MODE = "real"
 $env:OPENROUTER_API_KEY = "sk-or-..."
+$env:ANVIL_PLANNING_MODEL = "google/gemma-4-26b-a4b-it"
+$env:ANVIL_CODING_MODEL = "deepseek/deepseek-v4-flash"
 $env:PYTHONPATH = "C:\path\to\repo\runtime"
 python -m uvicorn anvil_runtime.app:app --host 127.0.0.1 --port 8765
 ```

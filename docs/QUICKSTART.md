@@ -41,6 +41,19 @@ $env:OPENROUTER_API_KEY = "sk-or-..."     # your key
 .\scripts\start-anvil.ps1
 ```
 
+By default, the launcher now routes:
+
+- planning/analysis/review → `google/gemma-4-26b-a4b-it`
+- coding/debugging → `deepseek/deepseek-v4-flash`
+
+You can override either model per run:
+
+```powershell
+.\scripts\start-anvil.ps1 `
+  -PlanningModel "google/gemma-4-26b-a4b-it" `
+  -CodingModel "deepseek/deepseek-v4-flash"
+```
+
 Verify: open <http://127.0.0.1:8765/v1/health> → `{"status":"ok",...}`.
 
 No key? Use placeholder output instead: `.\scripts\start-anvil.ps1 -Mode offline-llm`.
