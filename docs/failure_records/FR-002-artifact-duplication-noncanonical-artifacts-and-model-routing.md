@@ -3,7 +3,7 @@
 **Date:** 2026-06-15  
 **Run ID:** `8173533c7e3246c4a06ffe9aa09255cd`  
 **Execution Mode:** `real` (OpenRouter)  
-**Status:** Open  
+**Status:** Partially closed
 
 ---
 
@@ -13,7 +13,6 @@ The dollars-to-cents run produced working code, but three quality/governance iss
 
 1. Generated Markdown artifacts repeat the same content across multiple sections.
 2. Runtime emits additional non-canonical docs artifacts (`qa-test-plan.md`, `packaging-plan.md`, `documentation-plan.md`, `deployment-plan.md`, `phase-summary-log.md`) that are not part of the repository's canonical phase artifact list.
-3. All phases route to `deepseek/deepseek-chat`, including coding phases, despite planning/coding separation existing in the architecture.
 
 This record documents evidence from both generated artifacts and runtime code.
 
@@ -96,25 +95,6 @@ This is therefore expected behavior in current runtime design, not model improvi
 
 The runtime's 12-phase contract is broader than the instruction file's canonical list.
 
-### Issue 3: Why everything routes to `deepseek/deepseek-chat`
-
-Routing fallback in app initialization sets both planning and coding models to the same default unless env vars override.
-
-- File: `runtime/anvil_runtime/app.py`
-- `default_model = os.environ.get("ANVIL_MODEL", "deepseek/deepseek-chat")`
-- `planning_model = os.environ.get("ANVIL_PLANNING_MODEL", default_model)`
-- `coding_model = os.environ.get("ANVIL_CODING_MODEL", default_model)`
-
-If neither `ANVIL_PLANNING_MODEL` nor `ANVIL_CODING_MODEL` is set, both become `deepseek/deepseek-chat`.
-
-Subtask mapping still differentiates phase categories:
-- File: `runtime/anvil_runtime/agents/phase_invocation.py`
-- only `implementation` and `qa` map to `coding`; all others map to `planning`.
-
-But because both categories share the same model string by default, observed routing is uniformly `deepseek/deepseek-chat`.
-
----
-
 ## Additional Observation
 
 `ModelRouteSelected` and `TokenUsageReported` events in the log tail show `runId:""` (empty) while `PhaseStarted/PhaseCompleted` include the real run ID. This may reduce traceability for model/token analytics and should be validated as a separate instrumentation bug.
@@ -142,13 +122,7 @@ But because both categories share the same model string by default, observed rou
    - Option A: Update `.github/copilot-instructions.md` to explicitly include QA/packaging/documentation/deployment/cleanup artifacts.
    - Option B: Add a strict mode where only canonical five docs are emitted.
 
-3. **Set explicit model split in runtime startup**
-   - Example:
-     - `ANVIL_PLANNING_MODEL=google/gemma-4-26b-a4b-it`
-     - `ANVIL_CODING_MODEL=deepseek/deepseek-v4-flash`
-   - Avoid relying on shared fallback `ANVIL_MODEL` when behavior needs separation.
-
-4. **Fix event run ID propagation**
+3. **Fix event run ID propagation**
    - Ensure `ModelRouteSelected` and `TokenUsageReported` carry the active run ID.
 
 ---
