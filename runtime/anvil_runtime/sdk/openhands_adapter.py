@@ -321,12 +321,22 @@ class LLMBackend:
             "derivedFrom": list(step.input_files) or ["(none)"],
         }
         front = "---\n" + yaml.safe_dump(meta, sort_keys=False) + "---\n"
-        body = [f"# {step.phase.replace('-', ' ').title()}", "", "## Overview", content, ""]
+        # The LLM body is emitted exactly once (FR-002 fix): the doc prompt already
+        # asks the model to include the schema's required section headings inline.
+        # We append only the headings the model omitted, as empty stubs, so the
+        # deterministic validator (FR-AR-002) still passes without re-inserting the
+        # full body under every heading (which previously bloated artifacts ~2-3x
+        # and, via downstream input_files, inflated token usage).
+        body_text = content.strip()
+        parts = [f"# {step.phase.replace('-', ' ').title()}", "", body_text, ""]
+        present = "\n".join(
+            line for line in body_text.splitlines() if line.lstrip().startswith("#")
+        ).lower()
         for section in self._required_sections(step.phase):
-            body.append(f"## {section}")
-            body.append(content)
-            body.append("")
-        return front + "\n".join(body) + "\n"
+            if section.lower() not in present:
+                parts.append(f"## {section}")
+                parts.append("")
+        return front + "\n".join(parts) + "\n"
 
     @staticmethod
     def _required_sections(phase: str) -> list[str]:
