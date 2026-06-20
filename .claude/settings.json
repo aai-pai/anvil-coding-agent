@@ -3,7 +3,9 @@
     "allow": [
       "PowerShell(if \\(-not \\(Test-Path temp\\)\\) { New-Item -ItemType Directory temp | Out-Null }; \"temp ready\")",
       "PowerShell(python -m pytest tests -q -p no:cacheprovider 2>&1)",
-      "PowerShell(python temp\\\\repro_offline.py)"
+      "PowerShell(python temp\\\\repro_offline.py)",
+      "PowerShell($env:OPENROUTER_API_KEY = \"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\"; python temp\\\\verify_real.py 2>&1 | Tee-Object -FilePath temp\\\\results_after_real.txt)",
+      "PowerShell($env:OPENROUTER_API_KEY = \"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\"; python C:\\\\Users\\\\pcuser\\\\openhands_based_coding_team\\\\temp\\\\verify_real.py 2>&1 | Tee-Object -FilePath C:\\\\Users\\\\pcuser\\\\openhands_based_coding_team\\\\temp\\\\results_after_real.txt)"
     ]
   }
 }
