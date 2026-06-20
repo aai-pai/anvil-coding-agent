@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(if \\(-not \\(Test-Path temp\\)\\) { New-Item -ItemType Directory temp | Out-Null }; \"temp ready\")",
+      "PowerShell(python -m pytest tests -q -p no:cacheprovider 2>&1)",
+      "PowerShell(python temp\\\\repro_offline.py)"
+    ]
+  }
+}
