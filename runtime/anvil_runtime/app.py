@@ -51,6 +51,7 @@ def _build_real_manager(
     """Assemble an LLM-backed supervisor (offline or real OpenRouter transport)."""
     from anvil_runtime.agents.phase_invocation import BridgeExecutor
     from anvil_runtime.artifacts.validator import ArtifactValidator
+    from anvil_runtime.core.complexity_gate import make_llm_classifier
     from anvil_runtime.llm.model_router import ModelRouter
     from anvil_runtime.llm.openrouter_provider import (
         HttpxTransport,
@@ -88,12 +89,18 @@ def _build_real_manager(
         security_profile=cfg.securityProfile,
         workspace_root=workspace_root,
     )
+    # FR-002 issue 2: an LLM complexity gate decides whether the doc-only optional
+    # planning phases (packaging/documentation/deployment) run. It classifies once,
+    # using the planning model and the run's proposal/spec; ANVIL_COMPLEXITY forces
+    # a tier without a call. Errors fall back to the "full" default (all phases).
+    classifier = make_llm_classifier(provider, planning_model, workspace_root)
     return DevelopmentManager(
         workspace_root=workspace_root,
         config=cfg,
         event_bus=bus,
         executor=BridgeExecutor(bridge),
         artifact_validator=ArtifactValidator(workspace_root, event_bus=bus),
+        complexity_classifier=classifier,
     )
 
 

@@ -52,6 +52,21 @@ export ANVIL_PLANNING_MODEL=google/gemma-4-26b-a4b-it
 export ANVIL_CODING_MODEL=deepseek/deepseek-v4-flash
 ```
 
+### Complexity gate (optional planning docs)
+
+The doc-only planning phases (`packaging`, `documentation`, `deployment`) only
+run when the task is complex enough to warrant them. In `real`/`offline-llm`
+mode an LLM classifies the run once (from the proposal + spec) as
+`simple` / `standard` / `complex` and skips the phases the tier doesn't enable
+(`ComplexityClassified` and `PhaseSkipped` events record the decision). `qa` and
+`cleanup` always run. Force a tier (skips the classification call) with:
+
+```bash
+export ANVIL_COMPLEXITY=simple      # simple | standard | complex | full
+```
+
+`full` keeps every phase (the pre-gate behavior).
+
 On Windows PowerShell, set env vars first:
 
 ```powershell

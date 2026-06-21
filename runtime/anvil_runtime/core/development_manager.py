@@ -32,6 +32,11 @@ from anvil_runtime.config.schema import (
     EffectiveConfig,
     MANDATORY_SECURE_GATES,
 )
+from anvil_runtime.core.complexity_gate import (
+    DEFAULT_TIER,
+    enabled_optional_phases,
+    is_optional,
+)
 from anvil_runtime.core.escalation_service import EscalationService
 from anvil_runtime.core.phase_contracts import PhaseCompleteEvent
 from anvil_runtime.core.phase_dag import PhaseDAG
@@ -104,6 +109,9 @@ class _RunContext:
         self.pending_gate: str | None = None
         self.post_gates: dict[str, str] = {}
         self.pre_gates: dict[str, str] = {}
+        # Complexity tier for the run (FR-002 issue 2); resolved lazily the first
+        # time an optional planning phase is reached.
+        self.tier: str | None = None
 
 
 class DevelopmentManager:
@@ -125,6 +133,7 @@ class DevelopmentManager:
         artifact_validator: object | None = None,
         drift_checker: object | None = None,
         drift_context_provider: Callable[[str], object] | None = None,
+        complexity_classifier: Callable[[str], str] | None = None,
     ) -> None:
         self._root = workspace_root
         self._config = config or EffectiveConfig()
@@ -146,6 +155,10 @@ class DevelopmentManager:
         self._validator = artifact_validator
         self._drift_checker = drift_checker
         self._drift_context_provider = drift_context_provider
+        # FR-002 issue 2: classifies a run's complexity tier so doc-only optional
+        # phases can be skipped for simple tasks. None -> the "full" default keeps
+        # every phase (backward-compatible: stub mode / existing tests).
+        self._complexity_classifier = complexity_classifier
         self._runs: dict[str, _RunContext] = {}
 
     # -- lifecycle --------------------------------------------------------
@@ -310,6 +323,12 @@ class DevelopmentManager:
             ctx.status = "completed"
             self._emit(run_id, "RunCompleted", "")
             return self._progress(ctx)
+        # Complexity gate (FR-002 issue 2): skip disabled optional planning phases
+        # (packaging/documentation/deployment) for tasks that don't warrant them.
+        if is_optional(next_phase):
+            tier = self._ensure_tier(ctx)
+            if next_phase not in enabled_optional_phases(tier):
+                return self._skip_optional_phase(ctx, next_phase, tier)
         # Pre-phase gate (e.g., pre-deployment).
         pre_gate = ctx.pre_gates.get(next_phase)
         if pre_gate and not self._gate_satisfied(ctx, pre_gate):
@@ -348,6 +367,35 @@ class DevelopmentManager:
         ctx.pending_gate = gate
         self._emit(ctx.run_id, "ApprovalRequired", phase, data={"gate": gate})
         return self._progress(ctx, current_phase=phase)
+
+    # -- complexity gate --------------------------------------------------
+
+    def _ensure_tier(self, ctx: _RunContext) -> str:
+        """Resolve (once) and record the run's complexity tier."""
+        if ctx.tier is None:
+            ctx.tier = (
+                self._complexity_classifier(ctx.run_id)
+                if self._complexity_classifier is not None
+                else DEFAULT_TIER
+            )
+            self._emit(ctx.run_id, "ComplexityClassified", "", data={"tier": ctx.tier})
+        return ctx.tier
+
+    def _skip_optional_phase(self, ctx: _RunContext, phase_id: str, tier: str) -> RunProgress:
+        """Mark a complexity-gated phase complete without dispatching it."""
+        self._checkpoints.save_phase_completion(
+            ctx.run_id,
+            PhaseCheckpoint(
+                phase=phase_id,
+                completed_at=self._clock().isoformat(),
+                checksums={},
+            ),
+        )
+        ctx.completed.add(phase_id)
+        self._emit(ctx.run_id, "PhaseSkipped", phase_id, data={
+            "reason": "complexity gate", "tier": tier,
+        })
+        return self._progress(ctx)
 
     # -- approvals & overrides -------------------------------------------
 
