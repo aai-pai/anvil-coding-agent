@@ -1,6 +1,6 @@
 # Code Factory Instructions
 
-This workspace is a code factory. Source material is in `domain-knowledge/`. Follow these sequential phases, reviewing with me and committing+syncing to remote after each one before moving on.
+This workspace is a code factory. Source material is in `domain-knowledge/`. Unless otherwise noted, Anvil paths below are relative to the active workspace `anvil-development/v<version-number>/`. Follow these sequential phases, reviewing with me and committing+syncing to remote after each one before moving on.
 
 ## Phases
 
@@ -28,12 +28,12 @@ flowchart TD
     B --> C[Discuss with user]
     C --> D{Aligned?}
     D -- No --> C
-    D -- Yes --> E[Write docs/proposal.md]
+    D -- Yes --> E[Write proposal]
     E --> F{Approved?}
     F -- No --> E
     F -- Yes --> G[Commit & sync]
 
-    G --> H[Write docs/spec.md]
+    G --> H[Write spec]
     H --> I[Gap analysis vs proposal]
     I --> J{Drift?}
     J -- Yes --> H
@@ -41,17 +41,17 @@ flowchart TD
     K -- No --> H
     K -- Yes --> L[Commit & sync]
 
-    L --> M[Write docs/architecture.md]
+    L --> M[Write architecture]
     M --> N{Approved?}
     N -- No --> M
     N -- Yes --> O[Commit & sync]
 
-    O --> P[Write docs/blueprint.md\nMarkdown only — no source files]
+    O --> P[Write blueprint\nMarkdown only — no source files]
     P --> Q{Approved?}
     Q -- No --> P
     Q -- Yes --> R[Commit & sync]
 
-    R --> S[Write docs/plan.md\nPhases → Slices]
+    R --> S[Write plan\nPhases → Slices]
     S --> T{Approved?}
     T -- No --> S
     T -- Yes --> U[Commit & sync]
@@ -72,6 +72,12 @@ flowchart TD
 
 ## Conventions & Rules
 
+### Versioned Development Scope
+- The active Anvil workspace is `anvil-development/v<version-number>/`.
+- Use that workspace's `docs/`, `src/`, `tests/`, and `logs/` directories for all Anvil artifacts.
+- Keep top-level `docs/`, `src/`, `tests/`, and `logs/` for repository-level material unless a task explicitly targets Anvil.
+- Use the project root for repository-wide config and the active workspace for Anvil-specific config and artifacts.
+
 ### Branching Strategy
 - Work on `main` directly. Each phase (proposal, spec, architecture, etc.) is a separate commit gate.
 - Do not create feature branches unless explicitly requested.
@@ -87,13 +93,6 @@ flowchart TD
 - Wait for explicit approval at each gate (after Proposal, Spec, Architecture, Blueprint, Plan).
 - Do not proceed to the next phase without your approval.
 - If you do not respond within a reasonable time, ask for clarification before proceeding.
-
-### File & Folder Structure
-- **Source code:** `src/` (adjust per project language)
-- **Tests:** `tests/` (unit, integration, e2e subdirectories)
-- **Documentation:** `docs/` (for specification, architecture, blueprint, plan)
-- **Domain knowledge:** `domain-knowledge/` (immutable reference material)
-- **Configuration:** Project root (package.json, pyproject.toml, etc.)
 
 ### Commit Message Format
 Use atomic commits with pattern: `[PHASE] Short description`
@@ -114,7 +113,7 @@ If new requirements emerge during implementation that contradict the original do
 - Document the delta clearly so intent is preserved.
 
 ### Implementation Logging
-- Maintain `logs/implementation.log` with a detailed journal of all implementation work.
+- Maintain the implementation log with a detailed journal of all implementation work.
 - Record for each slice:
   - Slice name and objective
   - Files created/modified
@@ -123,6 +122,6 @@ If new requirements emerge during implementation that contradict the original do
   - Time taken and any blockers
   - Final status (passed, passed after N retries, escalated)
 - After each slice passes all tests:
-  - Update `docs/plan.md` to mark the slice as ✅ **COMPLETED**
+  - Update the plan artifact to mark the slice as ✅ **COMPLETED**
   - Add brief notes on what was done and any lessons learned
   - Include the git commit hash for the slice
