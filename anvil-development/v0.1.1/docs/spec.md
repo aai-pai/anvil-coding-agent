@@ -89,7 +89,9 @@ Amends v0.1.0 FR-ML-003.
 - **FR-RT-001**: Default model per tier (real OpenRouter slugs):
   - Planning/design phases (proposal, specification, architecture, blueprint,
     dev-plan) → **`google/gemma-4-31b-it`**.
-  - Coding phases (implementation, qa) → **`deepseek/deepseek-v4-pro`**.
+  - Coding phases (implementation, qa) → **`deepseek/deepseek-v4-flash`**
+    (cheapest coding-capable option; `deepseek/deepseek-v4-pro` is the documented
+    override for harder tasks).
 - **FR-RT-002**: Runtime wiring must not collapse all subtask categories to a single
   model. With no user override, the router's per-tier defaults (FR-RT-001) must be the
   effective selection.
@@ -98,7 +100,7 @@ Amends v0.1.0 FR-ML-003.
   `ANVIL_CODING_MODEL`, and `ANVIL_MODEL` environment variables.
 
 **Test:** with no overrides, a routing decision for a planning phase selects
-`google/gemma-4-31b-it` and for implementation/qa selects `deepseek/deepseek-v4-pro`.
+`google/gemma-4-31b-it` and for implementation/qa selects `deepseek/deepseek-v4-flash`.
 
 ---
 
