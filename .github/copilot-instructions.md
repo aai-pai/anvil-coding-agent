@@ -78,6 +78,13 @@ flowchart TD
 - Keep top-level `docs/`, `src/`, `tests/`, and `logs/` for repository-level material unless a task explicitly targets Anvil.
 - Use the project root for repository-wide config and the active workspace for Anvil-specific config and artifacts.
 
+### Versioning & Documentation
+Doc style follows the release type so each version's `docs/` stay concise without losing context:
+- **Patch / fix release** (e.g. v0.1.1): write **deltas** that reference the previous version's docs; do not reproduce unchanged baseline content.
+- **Minor / feature release** (e.g. v0.2.0): proposal and plan stay delta; **spec and architecture become self-contained snapshots** that fold all prior deltas back in and reset the baseline (consolidation point — prevents long delta chains).
+- **Major release** (e.g. v1.0.0): all docs are self-contained.
+- Per-document trend regardless of release: **proposal and plan are always version-scoped (delta)**; **architecture is a living document and trends to current-state/cumulative**; spec and blueprint are delta for fixes, snapshot for features.
+
 ### Branching Strategy
 - Work on `main` directly. Each phase (proposal, spec, architecture, etc.) is a separate commit gate.
 - Do not create feature branches unless explicitly requested.
