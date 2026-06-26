@@ -76,3 +76,39 @@
 reconciled. No drift.
 
 **Status.** ✅ COMPLETED — tests green on attempt 1.
+
+## Slice 4 — Complexity-gated phase selection (#11)
+
+**Objective.** Auxiliary phases run only when the assessed task complexity warrants.
+
+**Files modified.**
+- `runtime/anvil_runtime/core/phase_contracts.py` — `PhaseCompleteEvent.complexity_tier`.
+- `runtime/anvil_runtime/config/schema.py` — `EffectiveConfig.complexityTier` override
+  (FR-CX-006).
+- `runtime/anvil_runtime/sdk/openhands_adapter.py` — `StepResult.complexity_tier`;
+  proposal prompt requests a trailing `COMPLEXITY:` line; `_run_doc` + new
+  `_extract_tier` parse and strip it.
+- `runtime/anvil_runtime/sdk/session_bridge.py` — propagate the tier onto the event.
+- `runtime/anvil_runtime/core/development_manager.py` — `_GATED_BY_TIER` +
+  `excluded_for_tier`; `_RunContext.excluded`; `_record_success` sets the active set
+  after proposal and emits `ComplexityAssessed`; `step`/`_progress` select via
+  `next_phase(completed | excluded)`.
+
+**Design note (refines blueprint §4.1).** Absent/unparseable tier → `None` → no
+gating (fail-open). Stub executor emits no tier, so stub/offline runs stay at all 12
+phases (backward compatible); gating activates only on a real assessed tier or a
+config override. Blueprint §4.1 updated to match.
+
+**Tests added.**
+- `tests/unit/runtime/test_complexity_gate.py` — tier→excluded mapping (incl.
+  None/unknown → no gating), `_extract_tier` parse/strip/absent.
+- `tests/integration/phase_flow/test_gated_phase_selection.py` — simple→core only,
+  standard→+qa, complex→12, no-tier→12, config override wins; `ComplexityAssessed`
+  emitted.
+
+**Test results.** `pytest` — 240 passed (0 failures), first attempt.
+
+**Drift check.** Matches blueprint §1/§4 (with the §4.1 default refinement noted). No
+drift.
+
+**Status.** ✅ COMPLETED — tests green on attempt 1.

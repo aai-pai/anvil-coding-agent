@@ -47,6 +47,19 @@ DispatchStatus = Literal["success", "failure", "blocked", "escalated"]
 # Secure-mode mandatory gates that fire *before* a phase begins (vs. after).
 _PRE_GATE_PHASE = {"pre-deployment": "deployment"}
 
+# #11 (spec FR-CX-002): auxiliary phases gated out per complexity tier. An unknown
+# or absent tier gates nothing, so stub runs and unassessed runs execute fully.
+_GATED_BY_TIER: dict[str, set[str]] = {
+    "simple": {"qa", "packaging", "documentation", "deployment", "cleanup"},
+    "standard": {"packaging", "documentation", "deployment", "cleanup"},
+    "complex": set(),
+}
+
+
+def excluded_for_tier(tier: str | None) -> set[str]:
+    """Phases to skip for a complexity tier; empty for unknown/None (no gating)."""
+    return set(_GATED_BY_TIER.get(tier or "", set()))
+
 
 # ---------------------------------------------------------------------------
 # Result models (blueprint §3.1 forward types)
@@ -104,6 +117,8 @@ class _RunContext:
         self.pending_gate: str | None = None
         self.post_gates: dict[str, str] = {}
         self.pre_gates: dict[str, str] = {}
+        # #11: phases gated out by the assessed complexity tier (set after proposal).
+        self.excluded: set[str] = set()
 
 
 class DevelopmentManager:
@@ -284,6 +299,16 @@ class DevelopmentManager:
         self._emit(ctx.run_id, "PhaseCompleted", phase_id, data={
             "artifact_paths": event.artifact_paths,
         })
+        # #11: after the proposal phase, select the active phase set from the assessed
+        # (or config-overridden) complexity tier; gated-out phases are never run.
+        if phase_id == "proposal":
+            tier = self._config.complexityTier or event.complexity_tier
+            ctx.excluded = excluded_for_tier(tier)
+            self._emit(ctx.run_id, "ComplexityAssessed", phase_id, data={
+                "tier": tier,
+                "active": [p for p in self._dag.phases if p not in ctx.excluded],
+                "excluded": sorted(ctx.excluded),
+            })
 
     def _compute_artifact_checksums(self, paths: list[str]) -> dict[str, str]:
         import pathlib
@@ -305,7 +330,9 @@ class DevelopmentManager:
         ctx = self._require_run(run_id)
         if ctx.status != "running":
             return self._progress(ctx)
-        next_phase = self._dag.next_phase(ctx.completed)
+        # Complexity-gated phases (ctx.excluded) are treated as done for selection,
+        # so the supervisor never dispatches them (#11; FR-CX-003).
+        next_phase = self._dag.next_phase(ctx.completed | ctx.excluded)
         if next_phase is None:
             ctx.status = "completed"
             self._emit(run_id, "RunCompleted", "")
@@ -464,7 +491,7 @@ class DevelopmentManager:
 
     def _progress(self, ctx: _RunContext, current_phase: str | None = None) -> RunProgress:
         if current_phase is None and ctx.status not in ("completed", "stopped"):
-            current_phase = self._dag.next_phase(ctx.completed)
+            current_phase = self._dag.next_phase(ctx.completed | ctx.excluded)
         return RunProgress(
             run_id=ctx.run_id,
             status=ctx.status,
@@ -495,4 +522,5 @@ __all__ = [
     "ApprovalDecision",
     "RollbackPlan",
     "ResumePlan",
+    "excluded_for_tier",
 ]

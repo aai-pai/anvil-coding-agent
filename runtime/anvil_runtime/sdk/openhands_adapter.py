@@ -44,6 +44,7 @@ class StepResult(BaseModel):
     artifacts: list[str] = Field(default_factory=list)
     usage: dict[str, int] = Field(default_factory=dict)
     failure_reason: str | None = None
+    complexity_tier: str | None = None  # #11: set by the proposal phase only
 
 
 @runtime_checkable
@@ -141,12 +142,35 @@ class LLMBackend:
             model=model, prompt=self._doc_prompt(step),
             phase=step.phase, subtask=step.subtask, max_tokens=1500,
         ))
+        content = response.content
+        tier: str | None = None
+        if step.phase == "proposal":
+            # #11: the proposal carries a trailing COMPLEXITY marker; pull it out of
+            # the written document and report it for complexity gating.
+            content, tier = self._extract_tier(content)
         return StepResult(
             session_id=session_id, phase=step.phase, status="success",
-            output=response.content[:200],
-            artifacts=self._write_documents(step, response.content),
+            output=content[:200],
+            artifacts=self._write_documents(step, content),
             usage=response.usage,
+            complexity_tier=tier,
         )
+
+    @staticmethod
+    def _extract_tier(content: str) -> tuple[str, str | None]:
+        """Pull a trailing ``COMPLEXITY: <tier>`` marker; return (cleaned, tier|None).
+
+        Absent/unparseable -> ``None`` (the supervisor then applies no gating).
+        """
+        import re
+
+        pattern = re.compile(
+            r"(?im)^[ \t]*COMPLEXITY:[ \t]*(simple|standard|complex)[ \t]*$"
+        )
+        match = pattern.search(content)
+        tier = match.group(1).lower() if match else None
+        cleaned = pattern.sub("", content).rstrip() + "\n"
+        return cleaned, tier
 
     # -- code phase (multi-file) -----------------------------------------
 
@@ -187,6 +211,12 @@ class LLMBackend:
         if sections:
             lines.append("Write Markdown including these section headings: " + ", ".join(sections) + ".")
         lines.append("Respond with the document content only.")
+        if step.phase == "proposal":
+            lines.append(
+                "Then, on a final separate line, output exactly one of "
+                "`COMPLEXITY: simple`, `COMPLEXITY: standard`, or `COMPLEXITY: complex` "
+                "reflecting the project's overall complexity."
+            )
         return "\n\n".join(lines)
 
     def _code_prompt(self, step: PhaseStep) -> str:

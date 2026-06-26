@@ -173,6 +173,9 @@ class PhaseCompleteEvent(BaseModel):
     duration_ms: int
     token_usage: dict[str, int] | None = None
     failure_reason: str | None = None
+    # #11: the proposal phase reports an assessed complexity tier here
+    # (simple|standard|complex); other phases leave it None.
+    complexity_tier: str | None = None
 
 
 # ---------------------------------------------------------------------------

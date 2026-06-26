@@ -66,6 +66,9 @@ class EffectiveConfig(BaseModel):
     requiredApprovalGates: list[str] = Field(default_factory=list)
     mcpServers: list[dict[str, object]] = Field(default_factory=list)
     securityProfile: SecurityProfileLiteral = DEFAULT_SECURITY_PROFILE
+    # #11 (FR-CX-006): optional complexity-tier override; when set it wins over the
+    # proposal phase's assessed tier. None defers to the proposal's assessment.
+    complexityTier: str | None = None
 
 
 __all__ = [

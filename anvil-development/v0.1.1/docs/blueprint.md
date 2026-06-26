@@ -74,8 +74,9 @@ return front + "\n".join(body) + "\n"
 - `_doc_prompt`: when `step.phase == "proposal"`, append:
   `"On the final line output exactly: COMPLEXITY: <simple|standard|complex>."`
 - `_run_doc`: after completion, if proposal, parse the tier from `response.content`
-  (`_parse_tier(content) -> str | None`, default `standard` if absent/unparseable) and
-  set `StepResult.complexity_tier`. Strip the COMPLEXITY line from the written body.
+  (`_extract_tier(content) -> (cleaned, str | None)`) and set `StepResult.complexity_tier`;
+  strip the COMPLEXITY line from the written body. **Absent/unparseable → `None`,
+  which gates nothing** (fail-open; keeps stub/offline runs at all 12 phases).
 
 **`sdk/session_bridge.py` → `execute_phase`.** Copy `result.complexity_tier` onto the
 returned `PhaseCompleteEvent` (FR-CX-001).

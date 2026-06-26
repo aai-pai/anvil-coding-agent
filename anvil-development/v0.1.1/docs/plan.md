@@ -72,7 +72,7 @@ workspace; manager built rooted there.
 
 ---
 
-## Slice 4 — Complexity-gated phase selection (#11)
+## Slice 4 — Complexity-gated phase selection (#11) ✅ COMPLETED
 
 **Objective.** Auxiliary phases run only when the task warrants.
 
