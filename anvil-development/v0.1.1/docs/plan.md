@@ -19,7 +19,7 @@ Slices are ordered to minimize churn on shared files
 
 ---
 
-## Slice 1 — Telemetry & routing (#12, #13)
+## Slice 1 — Telemetry & routing (#12, #13) ✅ COMPLETED
 
 **Objective.** Real per-tier model defaults and a non-empty `runId` on every event.
 

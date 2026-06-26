@@ -1,0 +1,31 @@
+# Anvil v0.1.1 — Implementation Log
+
+## Slice 1 — Telemetry & routing (#12, #13)
+
+**Objective.** Real per-tier model defaults and a non-empty `runId` on every event.
+
+**Files modified.**
+- `runtime/anvil_runtime/llm/model_router.py` — default slugs now
+  `google/gemma-4-31b-it` (planning) and `deepseek/deepseek-v4-flash` (coding);
+  `select()` gains a `run_id` param threaded into the `ModelRouteSelected` emit.
+- `runtime/anvil_runtime/llm/usage_tracker.py` — `record()` gains a `run_id` param
+  threaded into the `TokenUsageReported` emit.
+- `runtime/anvil_runtime/sdk/session_bridge.py` — `execute_phase` reads
+  `payload.phase_context["run_id"]` and passes it to `select()` / `record()`.
+- `runtime/anvil_runtime/app.py` — `_build_real_manager` builds subtask overrides
+  only from explicitly-set env vars (a specific var wins over global `ANVIL_MODEL`);
+  otherwise the router's phase-aware defaults apply. Imports `SUBTASK_CATEGORIES`.
+
+**Tests added.**
+- `tests/unit/runtime/test_model_router.py` — `test_default_slugs_are_real_openrouter_ids`,
+  `test_select_event_carries_passed_run_id`.
+- `tests/unit/runtime/test_usage_tracker.py` — `test_record_event_carries_passed_run_id`.
+- `tests/integration/runtime/test_real_execution_pipeline.py` —
+  `test_routing_and_usage_events_carry_run_id` (all routing/usage events in a run
+  carry the active run id).
+
+**Test results.** `pytest` — 222 passed (0 failures), first attempt.
+
+**Drift check.** Matches blueprint §5 (#12) and §6 (#13); no drift, no extra surface.
+
+**Status.** ✅ COMPLETED — tests green on attempt 1.

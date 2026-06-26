@@ -20,6 +20,8 @@ from anvil_runtime.llm.openrouter_provider import (
     OfflineTransport,
     OpenRouterProvider,
 )
+from anvil_runtime.llm.model_router import ModelRouter
+from anvil_runtime.llm.usage_tracker import UsageTracker
 from anvil_runtime.sdk.openhands_adapter import LLMBackend, OpenHandsAdapter
 from anvil_runtime.sdk.session_bridge import SessionBridge
 from anvil_runtime.security.secret_adapter import SecretAdapter
@@ -121,6 +123,38 @@ def test_supervisor_real_pipeline_writes_and_validates_all_phases(tmp_path: path
     assert (tmp_path / "docs" / "architecture.md").is_file()
     # No validation failures were raised during the run.
     assert not any(e.eventType == "ArtifactValidationFailed" for e in bus.read_all())
+
+
+def test_routing_and_usage_events_carry_run_id(tmp_path: pathlib.Path) -> None:
+    # FR-EVT-001/002: across a real (offline) run, ModelRouteSelected and
+    # TokenUsageReported carry the active, non-empty run id.
+    bus = EventBus(str(tmp_path))
+    provider = OpenRouterProvider(
+        secret_adapter=SecretAdapter(provided_key="k"), transport=OfflineTransport()
+    )
+    bridge = SessionBridge(
+        adapter=OpenHandsAdapter(backend=LLMBackend(provider, str(tmp_path))),
+        model_router=ModelRouter(event_bus=bus),
+        usage_tracker=UsageTracker(event_bus=bus),
+        workspace_root=str(tmp_path),
+    )
+    manager = DevelopmentManager(
+        workspace_root=str(tmp_path),
+        event_bus=bus,
+        executor=BridgeExecutor(bridge),
+        artifact_validator=ArtifactValidator(workspace_root=str(tmp_path), event_bus=bus),
+    )
+    started = manager.start_run(RunStartRequest(mode="yolo", security_profile="open"))
+    manager.run_until_pause(started.run_id)
+
+    telemetry = [
+        e for e in bus.read_all()
+        if e.eventType in ("ModelRouteSelected", "TokenUsageReported")
+    ]
+    assert telemetry  # routing/usage events were emitted
+    assert any(e.eventType == "ModelRouteSelected" for e in telemetry)
+    assert all(e.runId == started.run_id for e in telemetry)
+    assert started.run_id  # non-empty
 
 
 def test_invalid_artifact_fails_phase(tmp_path: pathlib.Path) -> None:
