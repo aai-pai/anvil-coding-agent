@@ -38,7 +38,7 @@ Slices are ordered to minimize churn on shared files
 
 ---
 
-## Slice 2 — Section-specific documents (#10)
+## Slice 2 — Section-specific documents (#10) ✅ COMPLETED
 
 **Objective.** No duplicated body across section headings.
 

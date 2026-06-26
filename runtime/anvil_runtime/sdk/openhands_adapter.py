@@ -321,12 +321,30 @@ class LLMBackend:
             "derivedFrom": list(step.input_files) or ["(none)"],
         }
         front = "---\n" + yaml.safe_dump(meta, sort_keys=False) + "---\n"
-        body = [f"# {step.phase.replace('-', ' ').title()}", "", "## Overview", content, ""]
+        # Write the generated body exactly once (FR-DOC-001). The doc prompt asks the
+        # model to include the required section headings, so they normally appear
+        # within `content`; only synthesize a placeholder for any heading the model
+        # omitted (FR-DOC-002) — never re-emit the full body under each section.
+        body = [f"# {step.phase.replace('-', ' ').title()}", "", content.strip(), ""]
         for section in self._required_sections(step.phase):
-            body.append(f"## {section}")
-            body.append(content)
-            body.append("")
+            if not self._has_heading(content, section):
+                body.append(f"## {section}")
+                body.append("_See above._")
+                body.append("")
         return front + "\n".join(body) + "\n"
+
+    @staticmethod
+    def _has_heading(content: str, section: str) -> bool:
+        """True if a Markdown heading line in ``content`` mentions ``section``.
+
+        Mirrors the artifact validator's heading check (case-insensitive substring
+        over heading lines) so a section the model already produced is not
+        re-emitted as a placeholder.
+        """
+        headings = "\n".join(
+            line for line in content.splitlines() if line.lstrip().startswith("#")
+        ).lower()
+        return section.lower() in headings
 
     @staticmethod
     def _required_sections(phase: str) -> list[str]:

@@ -29,3 +29,23 @@
 **Drift check.** Matches blueprint §5 (#12) and §6 (#13); no drift, no extra surface.
 
 **Status.** ✅ COMPLETED — tests green on attempt 1.
+
+## Slice 2 — Section-specific documents (#10)
+
+**Objective.** Stop the document writer repeating the full body under every section.
+
+**Files modified.**
+- `runtime/anvil_runtime/sdk/openhands_adapter.py` — `LLMBackend._document` writes the
+  body once; adds a placeholder (`_See above._`) only for required-section headings the
+  model omitted. New `_has_heading` mirrors the validator's heading check.
+
+**Tests added.**
+- `tests/unit/runtime/test_document_writer.py` — body written once (no duplication),
+  missing sections get placeholders, present sections kept (not duplicated), generated
+  doc passes the artifact validator.
+
+**Test results.** `pytest` — 226 passed (0 failures), first attempt.
+
+**Drift check.** Matches blueprint §3; no drift.
+
+**Status.** ✅ COMPLETED — tests green on attempt 1.
