@@ -1,6 +1,10 @@
 # Local scratch and external clones
 /temp/
 
+# Generated Anvil run workspaces (each run is self-contained & disposable)
+/runs/*
+!/runs/README.md
+
 # Python
 __pycache__/
 *.py[cod]
