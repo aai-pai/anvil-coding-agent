@@ -112,3 +112,42 @@ config override. Blueprint §4.1 updated to match.
 drift.
 
 **Status.** ✅ COMPLETED — tests green on attempt 1.
+
+## Slice 5 — Failure-record (FR) reporting (feature)
+
+**Objective.** Write an FR-001/002-style record per phase failure.
+
+**Files added/modified.**
+- `runtime/anvil_runtime/core/failure_record.py` (new) — `render_fr` (deterministic
+  FR layout) and `write_fr` (`docs/failure_records/FR-<NNN>-<slug>.md`, sequenced).
+- `runtime/anvil_runtime/core/development_manager.py` — `_handle_failure` builds one
+  packet and calls `_write_failure_record` on EVERY failure (recovered or escalated);
+  the same packet is reused for escalation. Exec mode read from
+  `ANVIL_EXECUTION_MODE`; write errors are swallowed so diagnostics never break a run.
+
+**Tests added.**
+- `tests/unit/runtime/test_failure_record.py` — render layout/fields/run id;
+  `write_fr` sequences FR-001 then FR-002.
+- `tests/integration/phase_flow/test_failure_record_written.py` — an induced
+  validation failure escalates and writes `docs/failure_records/FR-001-*.md` carrying
+  the run id and `proposal`.
+
+**Test results.** `pytest` — 243 passed (0 failures), first attempt.
+
+**Drift check.** Matches blueprint §7; supervisor-owned record (FR-ROLE-001). No drift.
+
+**Status.** ✅ COMPLETED — tests green on attempt 1.
+
+---
+
+## Final review
+
+- Full suite: **243 passed**, 0 failures.
+- All six v0.1.1 changes (#9–#13 + complexity gating + FR reporting) implemented across
+  5 slices, each with unit/integration/e2e coverage per the plan.
+- Drift check: implementation matches spec/architecture/blueprint; the only refinement
+  (Slice 4 absent-tier default → no gating) is reflected back into blueprint §4.1.
+- Representative offline run covered by `test_supervisor_real_pipeline_*` and the
+  per-run-isolation e2e (offline-llm) — artifacts written + validated, events carry the
+  run id.
+- Runtime-only; the VS Code extension is unchanged.

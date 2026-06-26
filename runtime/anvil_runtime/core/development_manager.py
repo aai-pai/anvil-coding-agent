@@ -12,6 +12,7 @@ DAG is the durable, parallel-ready contract.
 
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Callable, Literal
@@ -33,6 +34,7 @@ from anvil_runtime.config.schema import (
     MANDATORY_SECURE_GATES,
 )
 from anvil_runtime.core.escalation_service import EscalationService
+from anvil_runtime.core.failure_record import write_fr
 from anvil_runtime.core.phase_contracts import PhaseCompleteEvent
 from anvil_runtime.core.phase_dag import PhaseDAG
 from anvil_runtime.core.phase_registry import PhaseRegistry
@@ -263,6 +265,15 @@ class DevelopmentManager:
         self._emit(ctx.run_id, "PhaseFailed", phase_id, severity="error", data={
             "attempt": count, "failure_reason": event.failure_reason,
         })
+        # FR feature (FR-REC-001): write a failure record for EVERY failure, whether it
+        # is about to be retried or escalated. One packet serves both purposes.
+        packet = self._escalation.build_packet(
+            ctx.run_id, phase_id,
+            reason=event.failure_reason or "phase failed",
+            attempts=count,
+            recent_events=[e.model_dump(mode="json") for e in self._events.stream(ctx.run_id)][-50:],
+        )
+        self._write_failure_record(ctx, packet)
         if self._retries.should_retry(ctx.run_id, phase_id):
             return PhaseDispatchResult(
                 run_id=ctx.run_id, phase=phase_id, status="failure",
@@ -270,12 +281,6 @@ class DevelopmentManager:
                 detail=f"retry scheduled (backoff {self._retries.backoff_seconds(count)}s)",
             )
         # Retries exhausted -> escalate and pause (FR-SV-019).
-        packet = self._escalation.build_packet(
-            ctx.run_id, phase_id,
-            reason=event.failure_reason or "phase failed",
-            attempts=count,
-            recent_events=[e.model_dump(mode="json") for e in self._events.stream(ctx.run_id)][-50:],
-        )
         self._escalation.escalate(packet)
         ctx.status = "escalated"
         return PhaseDispatchResult(
@@ -318,6 +323,17 @@ class DevelopmentManager:
             if target.is_file():
                 result[rel] = compute_checksum(target)
         return result
+
+    def _write_failure_record(self, ctx: _RunContext, packet) -> None:  # noqa: ANN001
+        """Persist an FR-style failure record (FR-REC-001).
+
+        Diagnostics must never break orchestration, so any write error is swallowed.
+        """
+        exec_mode = os.environ.get("ANVIL_EXECUTION_MODE", "stub")
+        try:
+            write_fr(self._root, packet, ctx.mode, exec_mode, self._clock())
+        except Exception:  # noqa: BLE001 - never fail a run because a record failed to write
+            pass
 
     # -- orchestration loop ----------------------------------------------
 

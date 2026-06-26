@@ -92,7 +92,7 @@ emit `ComplexityAssessed`, feed `next_phase(completed | excluded)`).
 
 ---
 
-## Slice 5 — Failure-record (FR) reporting (feature)
+## Slice 5 — Failure-record (FR) reporting (feature) ✅ COMPLETED
 
 **Objective.** Every phase failure writes an FR-001/002-style record.
 
