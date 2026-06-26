@@ -32,7 +32,7 @@ def _start(client: TestClient, mode: str = "gated", profile: str = "restricted")
     return body["run_id"]
 
 
-def test_task_in_request_is_written_to_domain_knowledge(
+def test_task_in_request_is_written_to_isolated_run_workspace(
     client: TestClient, tmp_path: pathlib.Path
 ) -> None:
     resp = client.post(
@@ -44,9 +44,12 @@ def test_task_in_request_is_written_to_domain_knowledge(
         },
     )
     assert resp.status_code == 201
-    dk = tmp_path / "domain-knowledge" / "background-information.md"
-    assert dk.is_file()
-    assert "build a CLI calculator" in dk.read_text(encoding="utf-8")
+    # #9: the task is written into an isolated runs/<date>-<slug>/ workspace, not the
+    # server root.
+    matches = list(tmp_path.glob("runs/*/domain-knowledge/background-information.md"))
+    assert len(matches) == 1
+    assert "build a CLI calculator" in matches[0].read_text(encoding="utf-8")
+    assert not (tmp_path / "domain-knowledge").exists()
 
 
 def test_deferred_run_advances_one_phase_at_a_time(client: TestClient) -> None:
@@ -78,8 +81,8 @@ def test_advance_unknown_run_returns_404(client: TestClient) -> None:
     assert client.post("/v1/runs/ghost/advance").status_code == 404
 
 
-def test_per_run_workspace_writes_to_chosen_folder(tmp_path: pathlib.Path) -> None:
-    # Default server workspace is one folder; the run targets another.
+def test_per_run_workspace_writes_under_chosen_folder(tmp_path: pathlib.Path) -> None:
+    # The chosen `workspace` is the base; the run isolates under <base>/runs/<slug>/.
     server_root = tmp_path / "server"
     project = tmp_path / "my-project"
     client = TestClient(create_app(workspace_root=str(server_root)))
@@ -96,8 +99,11 @@ def test_per_run_workspace_writes_to_chosen_folder(tmp_path: pathlib.Path) -> No
     assert resp.status_code == 201
     run_id = resp.json()["run_id"]
 
-    # The task + run state land in the chosen project folder, not the server root.
-    assert (project / "domain-knowledge" / "background-information.md").is_file()
+    # #9: isolated under <chosen workspace>/runs/<date>-<slug>/, not at the chosen
+    # folder root nor the server root.
+    matches = list(project.glob("runs/*/domain-knowledge/background-information.md"))
+    assert len(matches) == 1
+    assert not (project / "domain-knowledge").exists()
     assert not (server_root / "domain-knowledge").exists()
 
     # Run-scoped routes resolve to the per-run manager.

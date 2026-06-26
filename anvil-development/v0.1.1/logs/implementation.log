@@ -49,3 +49,30 @@
 **Drift check.** Matches blueprint §3; no drift.
 
 **Status.** ✅ COMPLETED — tests green on attempt 1.
+
+## Slice 3 — Per-run workspace isolation (#9)
+
+**Objective.** Every `build` run executes in an isolated `runs/<date>-<slug>/`.
+
+**Files added/modified.**
+- `runtime/anvil_runtime/api/run_workspace.py` (new) — `slug()` and
+  `resolve_run_workspace()` (creates `<base>/runs/<date>-<slug>/`, collision suffix).
+- `runtime/anvil_runtime/api/routes_runs.py` — `start_run` isolates a `build` run
+  (task supplied) under `runs/<date>-<slug>/` and writes the prompt there; a `start`
+  run (no task) uses the prepared workspace as-is (FR-RUN-004). Per-run manager rooted
+  at the run workspace.
+
+**Tests added/updated.**
+- `tests/unit/runtime/test_run_workspace.py` (new) — slug, dated workspace, collision.
+- `tests/e2e/per_run_isolation/test_per_run_isolation.py` (new) — fresh build with
+  unrelated base artifacts → isolated run workspace, pre-existing artifacts untouched
+  (regression for FR-001).
+- `tests/integration/api/test_runs_endpoints.py` — two pre-existing tests updated to
+  assert the new isolation behavior (task lands under `runs/<slug>/`, not the root).
+
+**Test results.** `pytest` — 231 passed (0 failures), first attempt.
+
+**Drift check.** Matches blueprint §2; FR-RUN-004 (`start` uses prepared workspace)
+reconciled. No drift.
+
+**Status.** ✅ COMPLETED — tests green on attempt 1.

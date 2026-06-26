@@ -12,10 +12,12 @@ next gate, escalation, stop, or completion before responding.
 from __future__ import annotations
 
 import pathlib
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
 from anvil_runtime.api.deps import get_run_manager
+from anvil_runtime.api.run_workspace import resolve_run_workspace
 from anvil_runtime.api.models import (
     ApprovalRequest,
     OverrideRequest,
@@ -61,26 +63,33 @@ def start_run(
     stream live progress (Level 2).
     """
     state = http_request.app.state
-    # Resolve this run's manager + workspace (per-run, or the server default).
-    if request.workspace and request.workspace != state.workspace_root:
-        from anvil_runtime.app import RunHandle, build_manager
-
-        manager, bus = build_manager(
-            request.workspace, state.execution_mode, state.config, state.secret_adapter
-        )
-        workspace_root = request.workspace
-        handle = RunHandle(manager, bus, workspace_root)
-    else:
-        manager = state.manager
-        workspace_root = state.workspace_root
-        handle = state.default_handle
-
+    base = request.workspace or state.workspace_root
+    # #9 (FR-RUN-001/002): a `build` run (task supplied) executes in its own isolated
+    # runs/<date>-<slug>/ workspace so unrelated repo artifacts cannot override it. A
+    # `start` run (no task) uses the prepared workspace as-is and reads its existing
+    # domain-knowledge file (FR-RUN-004).
     if request.task:
+        workspace_root = resolve_run_workspace(base, request.task, datetime.now(timezone.utc))
         target = pathlib.Path(workspace_root) / DOMAIN_KNOWLEDGE_FILE
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(
             f"# Project Request\n\n{request.task.strip()}\n", encoding="utf-8"
         )
+    else:
+        workspace_root = base
+
+    # Build a per-run manager rooted at the run workspace (FR-RUN-003); reuse the
+    # default manager only when the run targets the server's own root.
+    if workspace_root != state.workspace_root:
+        from anvil_runtime.app import RunHandle, build_manager
+
+        manager, bus = build_manager(
+            workspace_root, state.execution_mode, state.config, state.secret_adapter
+        )
+        handle = RunHandle(manager, bus, workspace_root)
+    else:
+        manager = state.manager
+        handle = state.default_handle
 
     started = manager.start_run(request)
     state.runs[started.run_id] = handle  # so advance/status/etc. resolve this run

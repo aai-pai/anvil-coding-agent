@@ -54,7 +54,7 @@ body once; add only missing required headings as explicit placeholders; add
 
 ---
 
-## Slice 3 — Per-run workspace isolation (#9)
+## Slice 3 — Per-run workspace isolation (#9) ✅ COMPLETED
 
 **Objective.** Every run builds in an isolated `runs/<date>-<slug>/`.
 
