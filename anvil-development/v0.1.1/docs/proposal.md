@@ -1,9 +1,10 @@
 # Anvil Proposal — v0.1.1
 
 v0.1.1 is a fix release: five defects found in real v0.1.0 testing (Issues #9–#13,
-grounded in failure records FR-001 and FR-002) plus one small feature —
-complexity-gated phase selection. The [v0.1.0 proposal](../../v0.1.0/docs/proposal.md)
-remains the baseline; this document covers only what changes.
+grounded in failure records FR-001 and FR-002) plus two small features —
+complexity-gated phase selection and automatic failure-record (FR) reporting. The
+[v0.1.0 proposal](../../v0.1.0/docs/proposal.md) remains the baseline; this document
+covers only what changes.
 
 **Stack.** OpenRouter (direct API calls) + a thin localhost REST runtime + the
 `@anvil` VS Code extension. v0.1.1 does **not use OpenHands yet** — the v0.1.0
@@ -36,7 +37,7 @@ or a placeholder, never a copy. Regression test asserts no duplicated blocks.
 The pipeline always emitted qa / packaging / documentation / deployment / cleanup
 docs, even for a trivial CLI (FR-002 §B).
 
-**Fix (the one new feature).** Complexity-gated phase selection:
+**Fix (complexity gating).** Complexity-gated phase selection:
 
 - **Core phases always run:** proposal, spec, architecture, blueprint, plan,
   implementation → the 5 canonical docs + `src/`.
@@ -64,6 +65,19 @@ phase. Test asserts the model selected per phase.
 
 **Fix.** Thread the active `runId` into every event. Test asserts a non-empty
 `runId` on all event types.
+
+## Feature: Failure-record (FR) reporting
+
+Adopt the team's FR pattern (FR-001/FR-002 on `test_anvil_v0.1.0_ssainis`) as an
+automatic per-run artifact. On **every phase failure** — including ones later
+recovered by retry — the supervisor writes a Markdown failure record to
+`<run-workspace>/docs/failure_records/FR-<NNN>-<slug>.md`, in the FR-001/002 section
+layout, populated from the escalation packet it already builds (no extra LLM call).
+
+These are supervisor-owned diagnostic records (an "escalation record" under the
+role rules), **not** phase artifacts — so they are exempt from complexity gating and
+the canonical artifact policy. Test: a run with an induced failure writes a
+conforming FR file carrying the run id, phase, reason, and attempt.
 
 ## Out of scope
 

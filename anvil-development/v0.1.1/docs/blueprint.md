@@ -155,15 +155,44 @@ Result: `ModelRouteSelected` and `TokenUsageReported` carry the active non-empty
 
 ---
 
-## 7. Files Touched
+## 7. Feature — Failure-Record (FR) Writer
 
-| File | Fixes |
+**New module `core/failure_record.py`** with a pure renderer + writer:
+```
+def render_fr(seq: int, packet: EscalationPacket, mode: str, exec_mode: str,
+              now: datetime) -> str:
+    # returns the FR-001/002 Markdown: metadata block + Summary / Observed Evidence /
+    # Root Cause (placeholder) / Impact / Recommendations (packet.available_actions) /
+    # Verification Plan (placeholder). Deterministic; no LLM. (FR-REC-002/003)
+
+def write_fr(workspace_root: str, packet: EscalationPacket, mode: str,
+             exec_mode: str, now: datetime) -> str:
+    # seq = count(docs/failure_records/FR-*.md) + 1; slug from phase + reason;
+    # writes docs/failure_records/FR-<NNN>-<slug>.md ; returns the path. (FR-REC-001)
+```
+
+**`core/development_manager.py` → `_handle_failure`.** It is the single chokepoint for
+every failure (pre-retry and at escalation). After `record_failure`, build the packet
+(reuse `self._escalation.build_packet`) and call `write_fr(self._root, packet, ctx.mode,
+exec_mode, self._clock())` for **every** failure, not only escalations (FR-REC-001).
+`exec_mode` is read from the existing execution-mode context (env/app state). The write
+must not alter phase status or single-writer ownership (FR-REC-005).
+
+The escalation path (retries exhausted) is unchanged except that the FR file already
+exists for that final failure.
+
+---
+
+## 8. Files Touched
+
+| File | Fixes / feature |
 |---|---|
 | `api/routes_runs.py` (+ small workspace helper) | #9 |
 | `sdk/openhands_adapter.py` | #10, #11 (tier emit + `StepResult` field) |
 | `sdk/session_bridge.py` | #11 (tier propagate), #13 (run_id) |
-| `core/development_manager.py` | #11 (gating) |
+| `core/development_manager.py` | #11 (gating), FR writer hook in `_handle_failure` |
 | `core/phase_contracts.py` | #11 (`PhaseCompleteEvent` field) |
+| `core/failure_record.py` (new) | FR writer |
 | `llm/model_router.py` | #12 (slugs), #13 (run_id param) |
 | `llm/usage_tracker.py` | #13 (run_id param) |
 | `app.py` | #12 (wiring) |
@@ -172,7 +201,7 @@ Result: `ModelRouteSelected` and `TokenUsageReported` carry the active non-empty
 
 ---
 
-## 8. Testing Map (per spec)
+## 9. Testing Map (per spec)
 
 | FR | Test |
 |---|---|
@@ -181,10 +210,11 @@ Result: `ModelRouteSelected` and `TokenUsageReported` carry the active non-empty
 | FR-CX-001…006 | `tests/unit/runtime/test_complexity_gate` (tier→excluded set) + `tests/integration/.../test_gated_phase_selection`: simple → 5 docs + src; complex → full set; `ComplexityAssessed` emitted |
 | FR-RT-001…003 | extend `tests/unit/runtime/test_model_router`: no override → planning=`google/gemma-4-31b-it`, impl/qa=`deepseek/deepseek-v4-flash` |
 | FR-EVT-001…002 | `tests/unit/runtime/test_usage_tracker` + `test_model_router`: emitted events carry non-empty `runId`; integration asserts all event types in a run share the run id |
+| FR-REC-001…005 | `tests/unit/runtime/test_failure_record` (render/seq/slug) + `tests/integration/.../test_failure_record_written`: an induced failure writes a conforming `docs/failure_records/FR-001-*.md`; a second failure writes `FR-002` |
 
 ---
 
-## 9. Gap Analysis (Architecture → Blueprint)
+## 10. Gap Analysis (Architecture → Blueprint)
 
 | Architecture | Blueprint |
 |---|---|
@@ -193,6 +223,7 @@ Result: `ModelRouteSelected` and `TokenUsageReported` carry the active non-empty
 | A.3 complexity gate | §1, §4 |
 | A.4 routing | §5 |
 | A.5 run-scoped emitters | §6 |
+| A.6 failure-record writer | §7 |
 
 No gaps. A.2 is realized by fixing the existing `_document` writer in place (minimal
 change) rather than extracting a new module.

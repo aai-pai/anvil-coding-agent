@@ -121,15 +121,45 @@ non-empty `runId` equal to the run's id.
 
 ---
 
-## 6. Gap Analysis (Proposal → Spec)
+## 6. Failure-Record (FR) Reporting (feature)
+
+Adopt the team's FR pattern as an automatic per-run artifact. The supervisor already
+builds an escalation packet (run id, phase, reason, attempt count, recent events) but
+never writes a human-readable record; this feature does.
+
+- **FR-REC-001**: On **every** phase failure event (including failures later recovered
+  by a retry, not only escalations), the supervisor must write a Markdown failure
+  record to `<run-workspace>/docs/failure_records/FR-<NNN>-<slug>.md`, where `<NNN>` is
+  a per-run sequence (zero-padded) and `<slug>` is derived from the phase and reason.
+- **FR-REC-002**: The record must follow the FR-001/FR-002 layout: a metadata block
+  (Date, Run ID, Execution Mode, Status) followed by `Summary`, `Observed Evidence`,
+  `Root Cause`, `Impact`, `Recommendations`, and `Verification Plan` sections.
+- **FR-REC-003**: The record must be generated deterministically from the escalation
+  packet and run context — **no extra LLM call**. Fields the supervisor does not know
+  (root cause, verification plan) are explicit placeholders for human follow-up.
+- **FR-REC-004**: The record must carry the active, non-empty run id (consistent with
+  FR-EVT-001) and the failing phase and attempt number.
+- **FR-REC-005**: Failure records are supervisor-owned diagnostic artifacts, **not**
+  phase artifacts: they are exempt from complexity gating (§3) and the canonical
+  artifact policy, and writing them must not change phase status or single-writer
+  ownership.
+
+**Test:** a run with an induced phase failure writes a conforming
+`docs/failure_records/FR-001-*.md` containing the run id, phase, reason, and attempt;
+two failures in a run produce `FR-001` and `FR-002`.
+
+---
+
+## 7. Gap Analysis (Proposal → Spec)
 
 | Proposal item | Spec coverage |
 |---|---|
-| #9 per-run isolation (§6.1, §8.11) | §1 FR-RUN-001…004 |
-| #10 section-specific docs (§9.2) | §2 FR-DOC-001…002 |
-| #11 complexity gating (§8.12, §9.1) | §3 FR-CX-001…006 |
-| #12 phase-aware routing — Gemma 4 / DeepSeek (§10) | §4 FR-RT-001…003 |
-| #13 runId on all events (§8.8) | §5 FR-EVT-001…002 |
+| #9 per-run isolation | §1 FR-RUN-001…004 |
+| #10 section-specific docs | §2 FR-DOC-001…002 |
+| #11 complexity gating | §3 FR-CX-001…006 |
+| #12 phase-aware routing — Gemma 4 / DeepSeek | §4 FR-RT-001…003 |
+| #13 runId on all events | §5 FR-EVT-001…002 |
+| Feature: failure-record reporting | §6 FR-REC-001…005 |
 | Stack: no OpenHands | Header note |
 
 No gaps; the proposal's deferred items (model slugs, complexity tiers) are now pinned
@@ -137,11 +167,11 @@ in §4 and §3.
 
 ---
 
-## 7. Acceptance Criteria
+## 8. Acceptance Criteria
 
-Approved when each of #9–#13 has testable requirements (above) with a stated
-regression test, the model slugs and complexity tiers are pinned, and the gap
-analysis shows full coverage. No open questions remain.
+Approved when each of #9–#13 and the FR-reporting feature has testable requirements
+(above) with a stated regression test, the model slugs and complexity tiers are
+pinned, and the gap analysis shows full coverage. No open questions remain.
 
 ---
 

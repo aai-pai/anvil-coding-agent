@@ -82,6 +82,21 @@ threads the active `runId` (which the Development Manager already holds) into th
 routing and usage-tracking emission paths per run (FR-EVT-002), so every event type
 carries a non-empty `runId` (FR-EVT-001).
 
+### A.6 Failure-Record Writer (feature → Escalation/Supervisor §3.2.1)
+
+A new **Failure-Record Writer**, owned by the supervisor's failure path, turns the
+existing escalation packet into a persisted Markdown record:
+
+- Invoked from the Development Manager's single failure chokepoint
+  (`_handle_failure`) on **every** phase failure, recovered or escalated (FR-REC-001).
+- Renders the escalation packet (run id, phase, reason, attempt, recent events) into
+  the FR-001/002 layout deterministically — no extra LLM call (FR-REC-002/003).
+- Writes to `<run-workspace>/docs/failure_records/FR-<NNN>-<slug>.md` with a per-run
+  sequence. Supervisor-owned diagnostic record (permitted by FR-ROLE-001 as an
+  escalation record), so it bypasses phase single-writer rules, complexity gating, and
+  the canonical artifact policy (FR-REC-005). Depends only on the Event Bus context
+  and the run workspace.
+
 ---
 
 ## B. Interaction Change — Run Start with Isolation, Gating, and Routing
@@ -116,6 +131,7 @@ sequenceDiagram
 | §3 FR-CX-001…006 (#11) | A.3 Complexity Gate |
 | §4 FR-RT-001…003 (#12) | A.4 OpenRouter Provider Routing |
 | §5 FR-EVT-001…002 (#13) | A.5 Run-Scoped Telemetry Emitters |
+| §6 FR-REC-001…005 (feature) | A.6 Failure-Record Writer |
 | Stack: no OpenHands | §3.7.2 inactive; A.2 + §3.7.1 are the generation path |
 
 No gaps. All other v0.1.0 components are unchanged.

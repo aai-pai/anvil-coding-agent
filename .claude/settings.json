@@ -4,7 +4,8 @@
       "Bash(git check-ignore *)",
       "Bash(git commit -m ' *)",
       "WebFetch(domain:openrouter.ai)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(git ls-tree *)"
     ]
   }
 }

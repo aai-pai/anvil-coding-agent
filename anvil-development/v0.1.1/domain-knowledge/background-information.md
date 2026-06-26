@@ -54,3 +54,15 @@ implementation.
 `ModelRouteSelected` and `TokenUsageReported` were emitted with `runId:""`.
 
 → Thread the active `runId` into every event.
+
+## New feature: failure-record (FR) reporting
+
+The team adopted the FR pattern used in testing (FR-001 / FR-002 on
+`test_anvil_v0.1.0_ssainis`) for tracking failures, and wants it built into each
+usage run.
+
+→ On **every phase failure** (including ones later recovered by retry), the
+supervisor auto-writes a Markdown failure record to
+`<run-workspace>/docs/failure_records/FR-<NNN>-<slug>.md`, matching the FR-001/002
+layout, generated deterministically from the escalation packet (no extra LLM call).
+Supervisor-owned diagnostic record, not a phase artifact.
