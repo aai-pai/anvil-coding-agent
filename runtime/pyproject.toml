@@ -6,7 +6,6 @@ build-backend = "setuptools.build_meta"
 name = "anvil-runtime"
 version = "0.1.0"
 description = "Anvil localhost runtime service: supervisor-orchestrated coding factory built on OpenHands + OpenRouter."
-readme = "../README.md"
 requires-python = ">=3.9"
 license = { text = "Proprietary" }
 authors = [{ name = "Anvil" }]

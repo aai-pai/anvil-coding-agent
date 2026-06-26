@@ -6,7 +6,8 @@
       "WebFetch(domain:openrouter.ai)",
       "WebSearch",
       "Bash(git ls-tree *)",
-      "Bash(python -m pytest -q)"
+      "Bash(python -m pytest -q)",
+      "Bash(python -c \"from anvil_runtime.app import create_app; app=create_app\\(execution_mode='offline-llm'\\); print\\('app builds OK; routes:', len\\(app.routes\\)\\)\")"
     ]
   }
 }
