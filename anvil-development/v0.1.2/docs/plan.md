@@ -81,6 +81,11 @@ Baseline entering implementation: 243 tests. Final: **272 passed** (Python).
   +4 tests; 3 fixtures updated.
 - **Slice 6 ✅ COMPLETED** — final review. Offline-llm e2e sanity (source_path →
   13 phases → OKF index + all new events verified live); RUNNING.md updated.
+  Shipped a starter `workspace/anvil-instructions.md` (the server-level default
+  the FR-INS-001 resolver consults; runtime file, deliberately not part of the
+  version-scoped dev docs) and gitignored `workspace/runs/`. Extension verified
+  on Node v24.18.0 (36 vitest tests, clean tsc) and repackaged as
+  `anvil-extension-0.1.2.vsix`.
   **Issue encountered:** Node.js is not installed on this development machine, so
   `npm test` (vitest) and `npm run build` (tsc) for the extension could not be
   run; TS changes (commandRouter/participant/runtimeClient/responseRenderer +
