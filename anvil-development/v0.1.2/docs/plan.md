@@ -86,6 +86,13 @@ Baseline entering implementation: 243 tests. Final: **272 passed** (Python).
   version-scoped dev docs) and gitignored `workspace/runs/`. Extension verified
   on Node v24.18.0 (36 vitest tests, clean tsc) and repackaged as
   `anvil-extension-0.1.2.vsix`.
+- **Amendment (post-review, JC request)** — `@anvil build` now starts runs in
+  **gated** mode instead of yolo, so the intake step can hold its one
+  clarifying round from chat before building; gated mode adds no approval
+  gates of its own, so a complete request still builds straight through
+  unattended. FR-INT-010 (yolo never pauses) is unchanged — `build` simply no
+  longer uses yolo. REST callers keep full mode control. Extension re-tested
+  and repackaged.
   **Issue encountered:** Node.js is not installed on this development machine, so
   `npm test` (vitest) and `npm run build` (tsc) for the extension could not be
   run; TS changes (commandRouter/participant/runtimeClient/responseRenderer +

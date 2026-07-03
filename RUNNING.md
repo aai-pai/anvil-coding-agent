@@ -95,7 +95,7 @@ A real run takes ~1–2 minutes and costs a few cents.
 
 | Command | What it does |
 |---|---|
-| `build <description>` | Build from plain English (autonomous, isolated run) |
+| `build <description>` | Build from plain English (isolated run; asks clarifying questions once if the request is underspecified, then builds without further gates) |
 | `build` | Build from the open folder's `domain-knowledge/background-information.md` (copied into an isolated run) |
 | `start [mode] [profile]` | Start a run from an existing `background-information.md` (in place, unisolated) |
 | `status` | Show current run state |
@@ -182,14 +182,15 @@ needed:
 Every run starts with a small **intake** step that checks whether
 `background-information.md` says enough to build from:
 
-- **Interactive runs (`gated`/`secure`)**: if information is missing, the run
-  pauses with up to 5 questions — answer with `@anvil answer <a1>; <a2>; …`
-  (or `POST /v1/runs/<id>/clarify`). Answers are appended to the run's
-  `background-information.md` under `## Clarifications`, and intake re-checks
-  **once** (never a second pause).
-- **Autonomous runs (`yolo`, including `build`)**: never pause. Gaps are filled
-  from `anvil-instructions.md` defaults and recorded in the file under
-  `## Assumptions`, so you can always see what was assumed.
+- **Interactive runs (`gated`/`secure` — including `@anvil build`)**: if
+  information is missing, the run pauses with up to 5 questions — answer with
+  `@anvil answer <a1>; <a2>; …` (or `POST /v1/runs/<id>/clarify`). Answers are
+  appended to the run's `background-information.md` under `## Clarifications`,
+  and intake re-checks **once** (never a second pause). A complete request
+  never pauses at all.
+- **Autonomous runs (`yolo`, e.g. REST with `"mode":"yolo"`)**: never pause.
+  Gaps are filled from `anvil-instructions.md` defaults and recorded in the
+  file under `## Assumptions`, so you can always see what was assumed.
 
 ### Standing instructions — `anvil-instructions.md`
 

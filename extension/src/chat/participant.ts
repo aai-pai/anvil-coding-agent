@@ -112,9 +112,11 @@ export class AnvilChatParticipant {
       }
       case "build": {
         // Conversational flow: the task comes straight from chat. The runtime
-        // writes it to domain-knowledge, then runs autonomously (yolo/open),
-        // building into the open VS Code folder when there is one. With no
-        // description (#17, FR-SRC-005), the open folder's
+        // writes it to domain-knowledge in an isolated run workspace, and the
+        // run starts in gated mode so the intake step may pause once with
+        // clarifying questions (answered via `answer <a1>; <a2>`) before
+        // building without further gates. With no description (#17,
+        // FR-SRC-005), the open folder's
         // domain-knowledge/background-information.md is the intent file.
         let intent: { task?: string; source_path?: string };
         let label: string;
@@ -134,7 +136,10 @@ export class AnvilChatParticipant {
         }
         const { started, state } = await this.runWithProgress(
           {
-            mode: "yolo",
+            // Gated (not yolo) so intake can ask once when the request is
+            // underspecified; gated mode adds no approval gates of its own,
+            // so a complete request still builds straight through.
+            mode: "gated",
             security_profile: "open",
             ...intent,
             workspace: context.workspace,

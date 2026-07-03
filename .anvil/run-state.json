@@ -1,0 +1,61 @@
+{
+  "runStateVersion": "0.1.0",
+  "runs": {
+    "11c66cd95e8c4b3d9835e41ed17f39ae": {
+      "completed_phases": [
+        {
+          "checksums": {},
+          "completed_at": "2026-07-03T23:37:21.987463+00:00",
+          "phase": "intake"
+        }
+      ],
+      "mode": "gated",
+      "retry_counters": {},
+      "runStateVersion": "0.1.0",
+      "run_id": "11c66cd95e8c4b3d9835e41ed17f39ae",
+      "stale_phases": []
+    },
+    "13ee2964c65048dea4279595a417e78b": {
+      "completed_phases": [
+        {
+          "checksums": {},
+          "completed_at": "2026-07-03T23:36:20.855138+00:00",
+          "phase": "intake"
+        }
+      ],
+      "mode": "gated",
+      "retry_counters": {},
+      "runStateVersion": "0.1.0",
+      "run_id": "13ee2964c65048dea4279595a417e78b",
+      "stale_phases": []
+    },
+    "3538fa1478fb4fb4b8a208e71834c9b2": {
+      "completed_phases": [
+        {
+          "checksums": {},
+          "completed_at": "2026-07-03T23:33:27.108926+00:00",
+          "phase": "intake"
+        }
+      ],
+      "mode": "gated",
+      "retry_counters": {},
+      "runStateVersion": "0.1.0",
+      "run_id": "3538fa1478fb4fb4b8a208e71834c9b2",
+      "stale_phases": []
+    },
+    "449362150c6649d6a9d8b9a0af79c22e": {
+      "completed_phases": [
+        {
+          "checksums": {},
+          "completed_at": "2026-07-03T23:35:42.569793+00:00",
+          "phase": "intake"
+        }
+      ],
+      "mode": "gated",
+      "retry_counters": {},
+      "runStateVersion": "0.1.0",
+      "run_id": "449362150c6649d6a9d8b9a0af79c22e",
+      "stale_phases": []
+    }
+  }
+}
