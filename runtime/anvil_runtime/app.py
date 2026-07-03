@@ -47,6 +47,7 @@ def _build_real_manager(
     bus: EventBus,
     secret_adapter: SecretAdapter,
     execution_mode: str,
+    instructions: str | None = None,
 ) -> DevelopmentManager:
     """Assemble an LLM-backed supervisor (offline or real OpenRouter transport)."""
     from anvil_runtime.agents.phase_invocation import BridgeExecutor
@@ -88,7 +89,8 @@ def _build_real_manager(
     # #18 (FR-CTX-001): env override > config field > default.
     input_char_limit = int(os.environ.get("ANVIL_INPUT_CHAR_LIMIT") or cfg.inputCharLimit)
     backend = LLMBackend(
-        provider, workspace_root, input_char_limit=input_char_limit, event_bus=bus
+        provider, workspace_root, input_char_limit=input_char_limit, event_bus=bus,
+        instructions=instructions,
     )
     bridge = SessionBridge(
         adapter=OpenHandsAdapter(backend=backend),
@@ -120,13 +122,16 @@ def build_manager(
     execution_mode: str,
     config: EffectiveConfig | None,
     secret_adapter: SecretAdapter,
+    instructions: str | None = None,
 ) -> tuple[DevelopmentManager, EventBus]:
     """Build a manager + its event bus rooted at ``workspace_root`` for a mode."""
     bus = EventBus(workspace_root)
     if execution_mode == "stub":
         manager = DevelopmentManager(workspace_root=workspace_root, config=config, event_bus=bus)
     else:
-        manager = _build_real_manager(workspace_root, config, bus, secret_adapter, execution_mode)
+        manager = _build_real_manager(
+            workspace_root, config, bus, secret_adapter, execution_mode, instructions
+        )
     return manager, bus
 
 
@@ -155,7 +160,11 @@ def create_app(
     elif mode == "stub":
         mgr = DevelopmentManager(workspace_root=workspace_root, config=config, event_bus=bus)
     else:
-        mgr = _build_real_manager(workspace_root, config, bus, secrets, mode)
+        # Default manager runs at the server root: run-level == base-level here.
+        from anvil_runtime.instructions import resolve_instructions
+
+        resolved = resolve_instructions(workspace_root, workspace_root)
+        mgr = _build_real_manager(workspace_root, config, bus, secrets, mode, resolved.text)
 
     app.state.workspace_root = workspace_root
     app.state.event_bus = bus

@@ -52,6 +52,45 @@ def test_task_in_request_is_written_to_isolated_run_workspace(
     assert not (tmp_path / "domain-knowledge").exists()
 
 
+def test_instructions_resolved_event_records_path(
+    client: TestClient, tmp_path: pathlib.Path
+) -> None:
+    # #14 (FR-INS-004): the audit trail records which instructions governed the run.
+    (tmp_path / "anvil-instructions.md").write_text(
+        "Default to Python.", encoding="utf-8"
+    )
+    resp = client.post(
+        "/v1/runs",
+        json={"mode": "yolo", "security_profile": "open", "task": "build a tool"},
+    )
+    assert resp.status_code == 201
+    run_id = resp.json()["run_id"]
+    events_files = list(tmp_path.glob("runs/*/logs/events.jsonl"))
+    assert len(events_files) == 1
+    lines = events_files[0].read_text(encoding="utf-8").splitlines()
+    resolved = [l for l in lines if '"InstructionsResolved"' in l]
+    assert len(resolved) == 1
+    assert "anvil-instructions.md" in resolved[0]
+    assert run_id in resolved[0]
+
+
+def test_instructions_absent_event_records_null(
+    client: TestClient, tmp_path: pathlib.Path
+) -> None:
+    client.post(
+        "/v1/runs",
+        json={"mode": "yolo", "security_profile": "open", "task": "build a tool"},
+    )
+    events_files = list(tmp_path.glob("runs/*/logs/events.jsonl"))
+    resolved = [
+        l
+        for l in events_files[0].read_text(encoding="utf-8").splitlines()
+        if '"InstructionsResolved"' in l
+    ]
+    assert len(resolved) == 1
+    assert '"path": null' in resolved[0] or '"path":null' in resolved[0]
+
+
 def test_deferred_run_advances_one_phase_at_a_time(client: TestClient) -> None:
     # defer=true starts the run without advancing it (for live progress streaming).
     run_id = client.post(

@@ -27,6 +27,8 @@ from anvil_runtime.api.models import (
     RunStateResponse,
 )
 from anvil_runtime.core.development_manager import DevelopmentManager, RunProgress
+from anvil_runtime.core.phase_contracts import EventEnvelope
+from anvil_runtime.instructions import resolve_instructions
 
 router = APIRouter(prefix="/v1/runs", tags=["runs"])
 
@@ -78,13 +80,17 @@ def start_run(
     else:
         workspace_root = base
 
+    # #14 (FR-INS-001): resolve standing instructions for this run's roots.
+    resolved_instructions = resolve_instructions(workspace_root, base)
+
     # Build a per-run manager rooted at the run workspace (FR-RUN-003); reuse the
     # default manager only when the run targets the server's own root.
     if workspace_root != state.workspace_root:
         from anvil_runtime.app import RunHandle, build_manager
 
         manager, bus = build_manager(
-            workspace_root, state.execution_mode, state.config, state.secret_adapter
+            workspace_root, state.execution_mode, state.config, state.secret_adapter,
+            instructions=resolved_instructions.text,
         )
         handle = RunHandle(manager, bus, workspace_root)
     else:
@@ -92,6 +98,12 @@ def start_run(
         handle = state.default_handle
 
     started = manager.start_run(request)
+    # FR-INS-004: the audit trail records which instructions governed this run.
+    handle.event_bus.emit(EventEnvelope(
+        timestamp=datetime.now(timezone.utc), eventType="InstructionsResolved",
+        runId=started.run_id, phase="", severity="info",
+        data={"path": resolved_instructions.path, "truncated": resolved_instructions.truncated},
+    ))
     state.runs[started.run_id] = handle  # so advance/status/etc. resolve this run
     if not defer:
         manager.run_until_pause(started.run_id)

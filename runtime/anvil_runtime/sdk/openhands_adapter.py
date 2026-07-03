@@ -112,6 +112,7 @@ class LLMBackend:
         clock: "object | None" = None,
         input_char_limit: int | None = None,
         event_bus: "object | None" = None,
+        instructions: str | None = None,
     ) -> None:
         from anvil_runtime.config.schema import DEFAULT_INPUT_CHAR_LIMIT
 
@@ -122,6 +123,10 @@ class LLMBackend:
         # #18 (FR-CTX-001): per-file cap when assembling inputs into prompts.
         self._input_char_limit = input_char_limit or DEFAULT_INPUT_CHAR_LIMIT
         self._events = event_bus
+        # #14 (FR-INS-002/003): standing instructions, injected as a dedicated
+        # block in every prompt; resolved (and capped) upstream, never truncated
+        # by the input limit here.
+        self._instructions = instructions
         from datetime import datetime, timezone
 
         self._clock = clock or (lambda: datetime.now(timezone.utc))
@@ -227,11 +232,21 @@ class LLMBackend:
             data={"file": rel, "size": size, "limit": limit},
         ))
 
+    def _instructions_block(self) -> list[str]:
+        """The standing-instructions prompt block, or empty (FR-INS-002)."""
+        if not self._instructions:
+            return []
+        return [
+            "Standing instructions (anvil-instructions.md) — follow these for "
+            "defaults, fallbacks, and conventions:\n" + self._instructions
+        ]
+
     def _doc_prompt(self, step: PhaseStep) -> str:
         sections = self._required_sections(step.phase)
         ctx = self._read_inputs(step)
         lines = [
             f"You are the '{step.phase}' phase agent in an automated software factory.",
+            *self._instructions_block(),
             step.instruction,
         ]
         if ctx:
@@ -253,6 +268,7 @@ class LLMBackend:
         return "\n\n".join([
             "You are the implementation phase agent. Output the COMPLETE, runnable "
             "source code for the project described below.",
+            *self._instructions_block(),
             ("Project context:\n" + ctx) if ctx else "Build the project described by the plan.",
             f"Place files under: {out}. Include a runnable entry point.",
             "Output ONLY the files (no explanation, no commentary) using EXACTLY this "
