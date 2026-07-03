@@ -58,10 +58,10 @@ export function parseCommand(raw: string): ChatCommand {
     case "build":
     case "make":
     case "create": {
+      // #17 (FR-SRC-005): an empty description means "build from the open
+      // folder's domain-knowledge/background-information.md".
       const description = rest.join(" ").trim();
-      return description
-        ? { kind: "build", description }
-        : { kind: "help" };
+      return { kind: "build", description };
     }
     case "approve":
     case "yes":

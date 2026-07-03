@@ -34,6 +34,10 @@ class RunStartRequest(BaseModel):
     # Optional per-run output directory. When set, this run's artifacts are written
     # here (e.g. the folder open in VS Code) instead of the server's default root.
     workspace: str | None = None
+    # #17 (FR-SRC-001): path to an existing markdown intent file. Mutually exclusive
+    # with `task`; copied into a fresh isolated run workspace as its
+    # domain-knowledge/background-information.md.
+    source_path: str | None = None
 
 
 class RunStarted(BaseModel):

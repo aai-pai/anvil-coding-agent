@@ -57,8 +57,8 @@ describe("parseCommand: build", () => {
     });
   });
 
-  it("falls back to help when no description is given", () => {
-    expect(parseCommand("build")).toEqual({ kind: "help" });
+  it("returns an empty description for a bare build (file-based flow, FR-SRC-005)", () => {
+    expect(parseCommand("build")).toEqual({ kind: "build", description: "" });
   });
 });
 

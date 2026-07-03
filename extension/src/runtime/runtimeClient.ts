@@ -20,6 +20,8 @@ export interface RunStartRequest {
   task?: string;
   /** Per-run output folder (e.g. the open VS Code folder); defaults to server root. */
   workspace?: string;
+  /** Path to an existing intent markdown file; mutually exclusive with `task`. */
+  source_path?: string;
 }
 
 export interface RunStarted {

@@ -91,6 +91,70 @@ def test_instructions_absent_event_records_null(
     assert '"path": null' in resolved[0] or '"path":null' in resolved[0]
 
 
+def test_source_path_build_copies_into_isolated_workspace(
+    client: TestClient, tmp_path: pathlib.Path
+) -> None:
+    # #17 (FR-SRC-001/002): the file is copied into a fresh runs/<date>-<slug>/
+    # workspace whose slug derives from the first heading.
+    project = tmp_path / "my-project" / "domain-knowledge"
+    project.mkdir(parents=True)
+    source = project / "background-information.md"
+    source.write_text(
+        "# Modern To-Do List\n\nA to-do list app in plain HTML.\n", encoding="utf-8"
+    )
+    (project / "anvil-instructions.md").write_text(
+        "Default to a single-file HTML app.", encoding="utf-8"
+    )
+
+    resp = client.post(
+        "/v1/runs",
+        json={"mode": "yolo", "security_profile": "open", "source_path": str(source)},
+    )
+    assert resp.status_code == 201, resp.text
+    matches = list(tmp_path.glob("runs/*/domain-knowledge/background-information.md"))
+    assert len(matches) == 1
+    run_dk = matches[0].parent
+    assert "modern-to-do-list" in run_dk.parent.name
+    assert "A to-do list app in plain HTML." in matches[0].read_text(encoding="utf-8")
+    # FR-INS-005: the sibling instructions file travels with the request.
+    assert (run_dk / "anvil-instructions.md").read_text(encoding="utf-8") == (
+        "Default to a single-file HTML app."
+    )
+    # The source project itself is untouched (isolation preserved).
+    assert not (tmp_path / "my-project" / "runs").exists()
+
+
+def test_source_path_missing_returns_400(client: TestClient, tmp_path: pathlib.Path) -> None:
+    resp = client.post(
+        "/v1/runs",
+        json={
+            "mode": "yolo",
+            "security_profile": "open",
+            "source_path": str(tmp_path / "nope.md"),
+        },
+    )
+    assert resp.status_code == 400
+    assert "source_path" in resp.json()["detail"]
+    assert not (tmp_path / "runs").exists()  # FR-SRC-003: nothing is created
+
+
+def test_task_and_source_path_are_mutually_exclusive(
+    client: TestClient, tmp_path: pathlib.Path
+) -> None:
+    source = tmp_path / "intent.md"
+    source.write_text("# X\n", encoding="utf-8")
+    resp = client.post(
+        "/v1/runs",
+        json={
+            "mode": "yolo",
+            "security_profile": "open",
+            "task": "build a thing",
+            "source_path": str(source),
+        },
+    )
+    assert resp.status_code == 400  # FR-SRC-004
+
+
 def test_deferred_run_advances_one_phase_at_a_time(client: TestClient) -> None:
     # defer=true starts the run without advancing it (for live progress streaming).
     run_id = client.post(

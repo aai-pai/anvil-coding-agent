@@ -28,7 +28,7 @@ from anvil_runtime.api.models import (
 )
 from anvil_runtime.core.development_manager import DevelopmentManager, RunProgress
 from anvil_runtime.core.phase_contracts import EventEnvelope
-from anvil_runtime.instructions import resolve_instructions
+from anvil_runtime.instructions import INSTRUCTIONS_FILENAME, resolve_instructions
 
 router = APIRouter(prefix="/v1/runs", tags=["runs"])
 
@@ -45,6 +45,46 @@ def _to_state_response(progress: RunProgress) -> RunStateResponse:
 
 
 DOMAIN_KNOWLEDGE_FILE = "domain-knowledge/background-information.md"
+
+
+def _source_slug_seed(content: str, stem: str) -> str:
+    """Slug seed for a source-file run: first ``#`` heading, else file stem (FR-SRC-002)."""
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            heading = stripped.lstrip("#").strip()
+            if heading:
+                return heading
+    return stem
+
+
+def _materialize_source(base: str, source_path: str) -> str:
+    """Copy a source markdown file into a fresh isolated run workspace (FR-SRC-001).
+
+    Also copies a sibling ``anvil-instructions.md`` into the run's
+    ``domain-knowledge/`` so run-level instructions travel with the request
+    (FR-INS-005). Returns the run workspace root; raises 400 when the source is
+    missing or unreadable (FR-SRC-003) — nothing is created in that case.
+    """
+    source = pathlib.Path(source_path)
+    try:
+        content = source.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"source_path is missing or unreadable: {source_path} ({exc})",
+        )
+    seed = _source_slug_seed(content, source.stem)
+    workspace_root = resolve_run_workspace(base, seed, datetime.now(timezone.utc))
+    target = pathlib.Path(workspace_root) / DOMAIN_KNOWLEDGE_FILE
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+    sibling = source.parent / INSTRUCTIONS_FILENAME
+    if sibling.is_file():
+        (target.parent / INSTRUCTIONS_FILENAME).write_text(
+            sibling.read_text(encoding="utf-8"), encoding="utf-8"
+        )
+    return workspace_root
 
 
 @router.post("", response_model=RunStarted, status_code=status.HTTP_201_CREATED)
@@ -66,10 +106,18 @@ def start_run(
     """
     state = http_request.app.state
     base = request.workspace or state.workspace_root
+    if request.task and request.source_path:
+        # FR-SRC-004: two competing intents is a caller error.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="'task' and 'source_path' are mutually exclusive",
+        )
     # #9 (FR-RUN-001/002): a `build` run (task supplied) executes in its own isolated
     # runs/<date>-<slug>/ workspace so unrelated repo artifacts cannot override it. A
     # `start` run (no task) uses the prepared workspace as-is and reads its existing
-    # domain-knowledge file (FR-RUN-004).
+    # domain-knowledge file (FR-RUN-004). #17 (FR-SRC-001): a `source_path` run copies
+    # the referenced markdown file into a fresh isolated workspace, then behaves like
+    # a `task` run.
     if request.task:
         workspace_root = resolve_run_workspace(base, request.task, datetime.now(timezone.utc))
         target = pathlib.Path(workspace_root) / DOMAIN_KNOWLEDGE_FILE
@@ -77,6 +125,8 @@ def start_run(
         target.write_text(
             f"# Project Request\n\n{request.task.strip()}\n", encoding="utf-8"
         )
+    elif request.source_path:
+        workspace_root = _materialize_source(base, request.source_path)
     else:
         workspace_root = base
 

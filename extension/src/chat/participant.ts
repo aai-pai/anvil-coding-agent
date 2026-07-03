@@ -112,12 +112,30 @@ export class AnvilChatParticipant {
       case "build": {
         // Conversational flow: the task comes straight from chat. The runtime
         // writes it to domain-knowledge, then runs autonomously (yolo/open),
-        // building into the open VS Code folder when there is one.
+        // building into the open VS Code folder when there is one. With no
+        // description (#17, FR-SRC-005), the open folder's
+        // domain-knowledge/background-information.md is the intent file.
+        let intent: { task?: string; source_path?: string };
+        let label: string;
+        if (command.description) {
+          intent = { task: command.description };
+          label = `🛠️ Building: _${command.description}_`;
+        } else {
+          if (!context.workspace) {
+            return (
+              "⚠️ `build` without a description needs an open folder containing " +
+              "`domain-knowledge/background-information.md`."
+            );
+          }
+          const sourcePath = `${context.workspace}/domain-knowledge/background-information.md`;
+          intent = { source_path: sourcePath };
+          label = `🛠️ Building from \`${sourcePath}\``;
+        }
         const { started, state } = await this.runWithProgress(
           {
             mode: "yolo",
             security_profile: "open",
-            task: command.description,
+            ...intent,
             workspace: context.workspace,
           },
           progress
@@ -126,7 +144,7 @@ export class AnvilChatParticipant {
           ? `\n📁 into \`${context.workspace}\``
           : "";
         return (
-          `🛠️ Building: _${command.description}_${where}\n\n` +
+          `${label}${where}\n\n` +
           `${renderRunStarted(started)}\n\n${renderRunState(state)}`
         );
       }
