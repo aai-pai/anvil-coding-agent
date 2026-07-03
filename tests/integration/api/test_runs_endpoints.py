@@ -166,9 +166,9 @@ def test_deferred_run_advances_one_phase_at_a_time(client: TestClient) -> None:
 
     # Each advance completes exactly one more phase.
     first = client.post(f"/v1/runs/{run_id}/advance").json()
-    assert first["completed_phases"] == ["proposal"]
+    assert first["completed_phases"] == ["intake"]
     second = client.post(f"/v1/runs/{run_id}/advance").json()
-    assert second["completed_phases"] == ["proposal", "factory-init"]
+    assert second["completed_phases"] == ["intake", "proposal"]
 
     # Drive to completion.
     state = second
@@ -177,7 +177,7 @@ def test_deferred_run_advances_one_phase_at_a_time(client: TestClient) -> None:
             break
         state = client.post(f"/v1/runs/{run_id}/advance").json()
     assert state["status"] == "completed"
-    assert len(state["completed_phases"]) == 12
+    assert len(state["completed_phases"]) == 13
 
 
 def test_advance_unknown_run_returns_404(client: TestClient) -> None:
@@ -212,7 +212,7 @@ def test_per_run_workspace_writes_under_chosen_folder(tmp_path: pathlib.Path) ->
     # Run-scoped routes resolve to the per-run manager.
     state = client.get(f"/v1/runs/{run_id}").json()
     assert state["status"] == "completed"
-    assert len(state["completed_phases"]) == 12
+    assert len(state["completed_phases"]) == 13
 
 
 def test_yolo_run_completes_through_all_phases(client: TestClient) -> None:
@@ -220,9 +220,9 @@ def test_yolo_run_completes_through_all_phases(client: TestClient) -> None:
     state = client.get(f"/v1/runs/{run_id}").json()
     assert state["status"] == "completed"
     assert state["pending_approval_gate"] is None
-    assert state["completed_phases"][0] == "proposal"
+    assert state["completed_phases"][0] == "intake"
     assert state["completed_phases"][-1] == "cleanup"
-    assert len(state["completed_phases"]) == 12
+    assert len(state["completed_phases"]) == 13
 
 
 def test_secure_run_pauses_at_first_mandatory_gate(client: TestClient) -> None:
@@ -231,7 +231,7 @@ def test_secure_run_pauses_at_first_mandatory_gate(client: TestClient) -> None:
     assert state["status"] == "awaiting_approval"
     assert state["pending_approval_gate"] == "post-proposal"
     # The gated phase has completed but the run is held before the next.
-    assert state["completed_phases"] == ["proposal"]
+    assert state["completed_phases"] == ["intake", "proposal"]
 
 
 def test_approval_advances_to_next_gate(client: TestClient) -> None:

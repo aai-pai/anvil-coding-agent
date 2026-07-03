@@ -74,6 +74,8 @@ class SessionBridge:
             token_usage=result.usage or None,
             failure_reason=result.failure_reason,
             complexity_tier=result.complexity_tier,
+            questions=list(result.questions),
+            assumptions=list(result.assumptions),
         )
 
 

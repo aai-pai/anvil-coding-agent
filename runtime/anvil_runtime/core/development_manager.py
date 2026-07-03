@@ -43,7 +43,14 @@ from anvil_runtime.state.checkpoint_store import CheckpointStore, PhaseCheckpoin
 from anvil_runtime.state.event_bus import EventBus
 from anvil_runtime.state.run_summary import RunSummaryWriter
 
-RunStatus = Literal["running", "awaiting_approval", "completed", "escalated", "stopped"]
+RunStatus = Literal[
+    "running", "awaiting_approval", "awaiting_clarification",
+    "completed", "escalated", "stopped",
+]
+
+# #15 (FR-INT-009): the clarification cycle runs at most once per run; the re-run
+# after answers executes in assumption mode and can never pause again.
+CLARIFICATION_MAX_ROUNDS = 1
 DispatchStatus = Literal["success", "failure", "blocked", "escalated"]
 
 # Secure-mode mandatory gates that fire *before* a phase begins (vs. after).
@@ -74,6 +81,8 @@ class RunProgress(BaseModel):
     current_phase: str | None = None
     completed_phases: list[str] = Field(default_factory=list)
     pending_approval_gate: str | None = None
+    # #15 (FR-INT-007): intake questions awaiting user answers, when paused.
+    pending_questions: list[str] = Field(default_factory=list)
 
 
 class PhaseDispatchResult(BaseModel):
@@ -107,6 +116,14 @@ class ResumePlan(BaseModel):
     invalidated_phases: list[str] = Field(default_factory=list)
 
 
+class ClarificationDecision(BaseModel):
+    """Outcome of recording clarification answers (#15, FR-INT-008)."""
+
+    run_id: str
+    round: int
+    appended: bool
+
+
 class _RunContext:
     """In-memory orchestration state for a single run."""
 
@@ -121,6 +138,9 @@ class _RunContext:
         self.pre_gates: dict[str, str] = {}
         # #11: phases gated out by the assessed complexity tier (set after proposal).
         self.excluded: set[str] = set()
+        # #15: bounded-clarification state (FR-INT-007..009).
+        self.clarification_round: int = 0
+        self.pending_questions: list[str] = []
 
 
 class DevelopmentManager:
@@ -215,7 +235,12 @@ class DevelopmentManager:
                 detail="prerequisite phases incomplete",
             )
         contract = self._registry.get(phase_id)
-        payload = build_invocation_payload(contract, phase_context={"run_id": run_id})
+        phase_context: dict[str, object] = {"run_id": run_id}
+        if phase_id == "intake":
+            # #15: tells the intake execution path whether it may ask (round 1,
+            # interactive) or must record assumptions instead (yolo / final round).
+            phase_context["clarification_mode"] = self._clarification_mode(ctx)
+        payload = build_invocation_payload(contract, phase_context=phase_context)
         self._emit(run_id, "PhaseStarted", phase_id)
         agent = self._factory.create(phase_id)
         event = self._executor.run(agent, payload)
@@ -304,6 +329,14 @@ class DevelopmentManager:
         self._emit(ctx.run_id, "PhaseCompleted", phase_id, data={
             "artifact_paths": event.artifact_paths,
         })
+        # #15 (FR-INT-011): every intake completion is recorded for the audit trail.
+        if phase_id == "intake":
+            self._emit(ctx.run_id, "IntakeAssessed", phase_id, data={
+                "complete": not event.questions and not event.assumptions,
+                "questions": list(event.questions),
+                "assumptions": list(event.assumptions),
+                "round": ctx.clarification_round,
+            })
         # #11: after the proposal phase, select the active phase set from the assessed
         # (or config-overridden) complexity tier; gated-out phases are never run.
         if phase_id == "proposal":
@@ -361,6 +394,14 @@ class DevelopmentManager:
         if result.status == "escalated":
             ctx.status = "escalated"
             return self._progress(ctx, current_phase=next_phase)
+        # #15 (FR-INT-007): intake questions pause an interactive run once.
+        if (
+            next_phase == "intake"
+            and result.complete_event is not None
+            and result.complete_event.questions
+            and self._clarification_mode(ctx) == "questions"
+        ):
+            return self._pause_for_clarification(ctx, result.complete_event.questions)
         # Post-phase gate (e.g., post-proposal).
         post_gate = ctx.post_gates.get(next_phase)
         if post_gate and not self._gate_satisfied(ctx, post_gate):
@@ -391,6 +432,68 @@ class DevelopmentManager:
         ctx.pending_gate = gate
         self._emit(ctx.run_id, "ApprovalRequired", phase, data={"gate": gate})
         return self._progress(ctx, current_phase=phase)
+
+    # -- clarification (#15) ----------------------------------------------
+
+    def _clarification_mode(self, ctx: _RunContext) -> str:
+        """``questions`` only for an interactive run's first round (FR-INT-009/010)."""
+        if ctx.mode == "yolo" or ctx.clarification_round >= CLARIFICATION_MAX_ROUNDS:
+            return "assumptions"
+        return "questions"
+
+    def _pause_for_clarification(
+        self, ctx: _RunContext, questions: list[str]
+    ) -> RunProgress:
+        ctx.status = "awaiting_clarification"
+        ctx.pending_questions = list(questions)
+        self._emit(ctx.run_id, "ClarificationRequired", "intake", data={
+            "questions": list(questions), "round": ctx.clarification_round,
+        })
+        return self._progress(ctx, current_phase="intake")
+
+    def submit_clarification(
+        self, run_id: str, answers: list[str]
+    ) -> ClarificationDecision:
+        """Record the user's answers and set intake up for its final round.
+
+        FR-INT-008: answers are appended to the run's domain-knowledge file
+        under ``## Clarifications`` (a supervisor-owned deterministic write,
+        exempt from phase single-writer rules like failure records), the intake
+        checkpoint is invalidated, and the run resumes.
+        """
+        ctx = self._require_run(run_id)
+        if ctx.status != "awaiting_clarification":
+            raise ValueError(f"Run '{run_id}' is not awaiting clarification")
+        self._append_clarifications(ctx, answers)
+        # Intake re-runs (final round, assumption mode) with the enriched file.
+        self._checkpoints.invalidate_phases(run_id, ["intake"])
+        ctx.completed.discard("intake")
+        self._retries.reset(run_id, "intake")
+        ctx.clarification_round += 1
+        ctx.pending_questions = []
+        ctx.status = "running"
+        self._emit(run_id, "ClarificationReceived", "intake", data={
+            "answers": len(answers), "round": ctx.clarification_round,
+        })
+        return ClarificationDecision(
+            run_id=run_id, round=ctx.clarification_round, appended=True
+        )
+
+    def _append_clarifications(self, ctx: _RunContext, answers: list[str]) -> None:
+        import pathlib
+
+        target = pathlib.Path(self._root) / "domain-knowledge" / "background-information.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        existing = target.read_text(encoding="utf-8") if target.is_file() else ""
+        lines = ["", "## Clarifications", ""]
+        questions = ctx.pending_questions
+        for index, answer in enumerate(answers):
+            question = questions[index] if index < len(questions) else "(additional)"
+            lines.append(f"- **Q:** {question}")
+            lines.append(f"  **A:** {answer}")
+        target.write_text(
+            existing.rstrip("\n") + "\n" + "\n".join(lines) + "\n", encoding="utf-8"
+        )
 
     # -- approvals & overrides -------------------------------------------
 
@@ -514,6 +617,7 @@ class DevelopmentManager:
             current_phase=current_phase,
             completed_phases=[p for p in self._dag.phases if p in ctx.completed],
             pending_approval_gate=ctx.pending_gate,
+            pending_questions=list(ctx.pending_questions),
         )
 
     def _require_run(self, run_id: str) -> _RunContext:
@@ -536,7 +640,9 @@ __all__ = [
     "RunProgress",
     "PhaseDispatchResult",
     "ApprovalDecision",
+    "ClarificationDecision",
     "RollbackPlan",
     "ResumePlan",
     "excluded_for_tier",
+    "CLARIFICATION_MAX_ROUNDS",
 ]

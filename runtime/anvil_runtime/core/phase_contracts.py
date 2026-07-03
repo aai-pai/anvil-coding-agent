@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 # ---------------------------------------------------------------------------
 
 PHASE_IDS: tuple[str, ...] = (
+    "intake",
     "proposal",
     "factory-init",
     "specification",
@@ -67,6 +68,15 @@ class PhaseContract(BaseModel):
 # Per-phase contracts derived from proposal §9. Output paths follow the
 # documentation-first scope (no build/ or deployment/ execution outputs).
 PHASE_CONTRACTS: dict[str, PhaseContract] = {
+    # #15 (FR-INT-001): dedicated completeness check before proposal. Its only
+    # writable output is the domain-knowledge file itself (append-only usage:
+    # recorded assumptions in autonomous runs).
+    "intake": PhaseContract(
+        phase_id="intake",
+        agent_name="intake_agent",
+        input_files=["domain-knowledge/background-information.md"],
+        allowed_outputs=["domain-knowledge/background-information.md"],
+    ),
     "proposal": PhaseContract(
         phase_id="proposal",
         agent_name="proposal_agent",
@@ -176,6 +186,10 @@ class PhaseCompleteEvent(BaseModel):
     # #11: the proposal phase reports an assessed complexity tier here
     # (simple|standard|complex); other phases leave it None.
     complexity_tier: str | None = None
+    # #15 (FR-INT-005/010): the intake phase reports clarifying questions
+    # (interactive round 1) or recorded assumptions; other phases leave them empty.
+    questions: list[str] = Field(default_factory=list)
+    assumptions: list[str] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

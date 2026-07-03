@@ -92,7 +92,7 @@ def test_failing_phase_escalates_after_retry_budget(tmp_path: pathlib.Path) -> N
     progress = mgr.run_until_pause(started.run_id)
     assert progress.status == "escalated"
     assert progress.current_phase == "proposal"
-    assert progress.completed_phases == []
+    assert progress.completed_phases == ["intake"]
     # A critical PhaseEscalation event was emitted.
     events = mgr._events.read_all()  # noqa: SLF001
     escalations = [e for e in events if e.eventType == "PhaseEscalation"]

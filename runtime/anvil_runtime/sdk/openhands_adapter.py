@@ -48,6 +48,9 @@ class StepResult(BaseModel):
     usage: dict[str, int] = Field(default_factory=dict)
     failure_reason: str | None = None
     complexity_tier: str | None = None  # #11: set by the proposal phase only
+    # #15: set by the intake phase only (clarifying questions / recorded assumptions).
+    questions: list[str] = Field(default_factory=list)
+    assumptions: list[str] = Field(default_factory=list)
 
 
 @runtime_checkable
@@ -137,16 +140,94 @@ class LLMBackend:
         self._sessions[session_id] = cfg
         return session_id
 
-    # The implementation phase generates real, multi-file source code; all other
-    # phases produce a single document artifact.
+    # The implementation phase generates real, multi-file source code; the intake
+    # phase assesses completeness (#15); all other phases produce a single
+    # document artifact.
     CODE_PHASE = "implementation"
+    INTAKE_PHASE = "intake"
+    MAX_INTAKE_QUESTIONS = 5  # FR-INT-005
 
     def run(self, session_id: str, step: PhaseStep) -> StepResult:
         cfg = self._sessions.get(session_id)
         model = cfg.model if cfg else "unknown"
         if step.phase == self.CODE_PHASE:
             return self._run_code(session_id, step, model)
+        if step.phase == self.INTAKE_PHASE:
+            return self._run_intake(session_id, step, model)
         return self._run_doc(session_id, step, model)
+
+    # -- intake phase (#15) -------------------------------------------------
+
+    def _run_intake(self, session_id: str, step: PhaseStep, model: str) -> StepResult:
+        from anvil_runtime.llm.openrouter_provider import CompletionRequest
+
+        mode = str(step.context.get("clarification_mode", "questions"))
+        response = self._provider.complete(CompletionRequest(
+            model=model, prompt=self._intake_prompt(step, mode),
+            phase=step.phase, subtask=step.subtask, max_tokens=400,
+        ))
+        questions, assumptions = self._parse_intake(response.content)
+        artifacts: list[str] = []
+        if mode == "assumptions":
+            questions = []  # assumption mode never pauses a run (FR-INT-009/010)
+            if assumptions:
+                artifacts = [self._append_assumptions(step, assumptions)]
+        return StepResult(
+            session_id=session_id, phase=step.phase, status="success",
+            output=response.content[:200],
+            artifacts=artifacts,
+            usage=response.usage,
+            questions=questions,
+            assumptions=assumptions,
+        )
+
+    def _intake_prompt(self, step: PhaseStep, mode: str) -> str:
+        ctx = self._read_inputs(step)
+        lines = [
+            "You are the 'intake' agent in an automated software factory. Assess "
+            "whether the project background information below is complete enough "
+            "to design and build the project.",
+            *self._instructions_block(),
+            ("Background information:\n" + ctx) if ctx else "Background information: (empty)",
+        ]
+        if mode == "assumptions":
+            lines.append(
+                "Do NOT ask questions. If information needed to build is missing, "
+                "output one line per gap, exactly `ASSUMPTION: <the default you will "
+                "proceed with>`, using the standing instructions' defaults where "
+                "applicable. If nothing important is missing, output exactly "
+                "`INTAKE: complete`."
+            )
+        else:
+            lines.append(
+                f"If the information is sufficient, output exactly `INTAKE: complete`. "
+                f"Otherwise output at most {self.MAX_INTAKE_QUESTIONS} lines, each "
+                "exactly `QUESTION: <a clarifying question>`. Only ask a question "
+                "whose answer would change what gets built AND is not answered by "
+                "the standing instructions' defaults."
+            )
+        lines.append("Output only these marker lines, nothing else.")
+        return "\n\n".join(lines)
+
+    def _parse_intake(self, content: str) -> tuple[list[str], list[str]]:
+        """Extract ``QUESTION:`` / ``ASSUMPTION:`` marker lines (FR-INT-005)."""
+        import re
+
+        questions = re.findall(r"(?im)^[ \t>*-]*QUESTION:[ \t]*(.+?)[ \t]*$", content)
+        assumptions = re.findall(r"(?im)^[ \t>*-]*ASSUMPTION:[ \t]*(.+?)[ \t]*$", content)
+        return questions[: self.MAX_INTAKE_QUESTIONS], assumptions
+
+    def _append_assumptions(self, step: PhaseStep, assumptions: list[str]) -> str:
+        """Append recorded assumptions to the domain-knowledge file (FR-INT-010)."""
+        rel = step.input_files[0] if step.input_files else (
+            "domain-knowledge/background-information.md"
+        )
+        target = self._root / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        existing = target.read_text(encoding="utf-8") if target.is_file() else ""
+        block = "\n## Assumptions\n\n" + "\n".join(f"- {a}" for a in assumptions) + "\n"
+        target.write_text(existing.rstrip("\n") + "\n" + block, encoding="utf-8")
+        return rel
 
     # -- document phases --------------------------------------------------
 

@@ -20,12 +20,14 @@ from anvil_runtime.core.phase_contracts import (
 )
 
 
-def test_twelve_canonical_phases() -> None:
-    assert len(PHASE_IDS) == 12
+def test_thirteen_canonical_phases() -> None:
+    # v0.1.2 #15: intake precedes proposal, making 13 canonical phases.
+    assert len(PHASE_IDS) == 13
     # Kebab-case identifiers from blueprint §6.3.
     assert "factory-init" in PHASE_IDS
     assert "dev-plan" in PHASE_IDS
-    assert PHASE_IDS[0] == "proposal"
+    assert PHASE_IDS[0] == "intake"
+    assert PHASE_IDS[1] == "proposal"
     assert PHASE_IDS[-1] == "cleanup"
 
 

@@ -20,6 +20,7 @@ from anvil_runtime.api.deps import get_run_manager
 from anvil_runtime.api.run_workspace import resolve_run_workspace
 from anvil_runtime.api.models import (
     ApprovalRequest,
+    ClarifyRequest,
     OverrideRequest,
     OverrideResult,
     RunStarted,
@@ -41,6 +42,7 @@ def _to_state_response(progress: RunProgress) -> RunStateResponse:
         current_phase=progress.current_phase,
         completed_phases=list(progress.completed_phases),
         pending_approval_gate=progress.pending_approval_gate,
+        pending_questions=list(progress.pending_questions),
     )
 
 
@@ -211,6 +213,29 @@ def approve(
     if decision.approved:
         manager.run_until_pause(run_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/{run_id}/clarify", response_model=RunStateResponse)
+def clarify(
+    run_id: str,
+    body: ClarifyRequest,
+    manager: DevelopmentManager = Depends(get_run_manager),
+) -> RunStateResponse:
+    """``POST /v1/runs/{run_id}/clarify`` — answer intake questions (#15).
+
+    Appends the answers to the run's domain-knowledge file and resumes the run
+    (intake re-runs once in assumption mode, then the pipeline proceeds).
+    """
+    try:
+        manager.submit_clarification(run_id, body.answers)
+    except KeyError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Unknown run '{run_id}'"
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    progress = manager.run_until_pause(run_id)
+    return _to_state_response(progress)
 
 
 @router.post("/{run_id}/override", response_model=OverrideResult)

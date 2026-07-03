@@ -62,6 +62,23 @@ describe("parseCommand: build", () => {
   });
 });
 
+describe("parseCommand: answer", () => {
+  it("captures the raw answer text (FR-INT-012)", () => {
+    expect(parseCommand("answer yes, localStorage; plain HTML")).toEqual({
+      kind: "answer",
+      text: "yes, localStorage; plain HTML",
+    });
+  });
+
+  it("accepts the clarify alias and falls back to help when empty", () => {
+    expect(parseCommand("clarify use sqlite")).toEqual({
+      kind: "answer",
+      text: "use sqlite",
+    });
+    expect(parseCommand("answer")).toEqual({ kind: "help" });
+  });
+});
+
 describe("parseCommand: approvals", () => {
   it("parses approve with a comment", () => {
     expect(parseCommand("approve looks good to me")).toEqual({

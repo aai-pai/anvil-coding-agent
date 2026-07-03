@@ -15,7 +15,7 @@ from anvil_runtime.core.phase_contracts import PhaseCompleteEvent
 from anvil_runtime.state.event_bus import EventBus
 
 _CORE = [
-    "proposal", "factory-init", "specification", "architecture",
+    "intake", "proposal", "factory-init", "specification", "architecture",
     "blueprint", "dev-plan", "implementation",
 ]
 
@@ -58,7 +58,7 @@ def test_simple_tier_runs_core_only(tmp_path: pathlib.Path) -> None:
 def test_complex_tier_runs_all_phases(tmp_path: pathlib.Path) -> None:
     progress, _ = _run(tmp_path, _TierExecutor("complex"))
     assert progress.status == "completed"
-    assert len(progress.completed_phases) == 12
+    assert len(progress.completed_phases) == 13
 
 
 def test_standard_tier_adds_qa_only(tmp_path: pathlib.Path) -> None:
@@ -69,7 +69,7 @@ def test_standard_tier_adds_qa_only(tmp_path: pathlib.Path) -> None:
 def test_no_tier_runs_all_phases(tmp_path: pathlib.Path) -> None:
     # Unassessed (e.g. stub) -> gate nothing (backward compatible).
     progress, _ = _run(tmp_path, _TierExecutor(None))
-    assert len(progress.completed_phases) == 12
+    assert len(progress.completed_phases) == 13
 
 
 def test_config_tier_override_wins(tmp_path: pathlib.Path) -> None:

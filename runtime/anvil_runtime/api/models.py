@@ -58,6 +58,12 @@ class ApprovalRequest(BaseModel):
     requesterId: str
 
 
+class ClarifyRequest(BaseModel):
+    """Body for ``POST /v1/runs/{run_id}/clarify`` (#15, FR-INT-008)."""
+
+    answers: list[str] = Field(min_length=1)
+
+
 class OverrideRequest(BaseModel):
     """Body for ``POST /v1/runs/{run_id}/override`` (force/rollback/stop)."""
 
@@ -81,6 +87,8 @@ class RunStateResponse(BaseModel):
     current_phase: str | None = None
     completed_phases: list[str] = Field(default_factory=list)
     pending_approval_gate: str | None = None
+    # #15 (FR-INT-007): intake questions awaiting answers via /clarify.
+    pending_questions: list[str] = Field(default_factory=list)
 
 
 class OverrideResult(BaseModel):
@@ -125,6 +133,7 @@ __all__ = [
     "RunStartRequest",
     "RunStarted",
     "ApprovalRequest",
+    "ClarifyRequest",
     "OverrideRequest",
     "RunStateResponse",
     "OverrideResult",

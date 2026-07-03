@@ -40,6 +40,7 @@ const TERMINAL_STATUSES = new Set([
   "escalated",
   "stopped",
   "awaiting_approval",
+  "awaiting_clarification",
 ]);
 
 export class AnvilChatParticipant {
@@ -151,6 +152,16 @@ export class AnvilChatParticipant {
       case "status": {
         const runId = this.requireRun();
         return renderRunState(await this.client.getRun(runId));
+      }
+      case "answer": {
+        // #15 (FR-INT-012): forward answers to /clarify; `;` separates answers.
+        const runId = this.requireRun();
+        const answers = command.text
+          .split(";")
+          .map((part) => part.trim())
+          .filter((part) => part.length > 0);
+        const state = await this.client.clarify(runId, { answers });
+        return renderRunState(state);
       }
       case "approve":
       case "deny": {

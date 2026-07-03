@@ -18,15 +18,15 @@ def test_resume_after_simulated_restart(tmp_path: pathlib.Path) -> None:
     mgr1 = DevelopmentManager(workspace_root=str(tmp_path))
     started = mgr1.start_run(RunStartRequest(mode="yolo", security_profile="open"))
     run_id = started.run_id
-    for phase in ("proposal", "factory-init", "specification"):
+    for phase in ("intake", "proposal", "factory-init"):
         result = mgr1.dispatch_phase(run_id, phase)
         assert result.status == "success"
 
     # --- second process: brand-new manager over the same workspace ---
     mgr2 = DevelopmentManager(workspace_root=str(tmp_path))
     plan = mgr2.resume_run(run_id)
-    assert plan.resume_from == "architecture"
-    assert set(plan.skipped_phases) == {"proposal", "factory-init", "specification"}
+    assert plan.resume_from == "specification"
+    assert set(plan.skipped_phases) == {"intake", "proposal", "factory-init"}
     assert plan.invalidated_phases == []
 
     # Emitted a ResumeFromCheckpoint event (FR-SV-023).

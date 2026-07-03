@@ -69,7 +69,12 @@ _CODING_PHASES = frozenset({"implementation", "qa"})
 
 def subtask_for_phase(phase_id: str) -> str:
     """Default subtask category for a phase (drives model routing)."""
-    return "coding" if phase_id in _CODING_PHASES else "planning"
+    if phase_id in _CODING_PHASES:
+        return "coding"
+    # #15: intake is a completeness assessment, not a design task.
+    if phase_id == "intake":
+        return "analysis"
+    return "planning"
 
 
 class DefaultExecutor:

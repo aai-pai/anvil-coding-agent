@@ -20,6 +20,7 @@ def test_resume_rewinds_to_earliest_invalid_phase(tmp_path: pathlib.Path) -> Non
     # whose checksum we then break.
     store = CheckpointStore(tmp_path)
     store.initialize_run("seed-run", "yolo")
+    store.save_phase_completion("seed-run", PhaseCheckpoint(phase="intake", completed_at="t0"))
     store.save_phase_completion("seed-run", PhaseCheckpoint(phase="proposal", completed_at="t1"))
 
     artifact = tmp_path / "artifact.txt"

@@ -36,6 +36,12 @@ export interface RunStateResponse {
   current_phase: string | null;
   completed_phases: string[];
   pending_approval_gate: string | null;
+  /** Intake questions awaiting answers via clarify() (#15). */
+  pending_questions?: string[];
+}
+
+export interface ClarifyRequest {
+  answers: string[];
 }
 
 export interface ApprovalRequest {
@@ -133,6 +139,15 @@ export class RuntimeClient {
     return this.requestJson<RunStateResponse>(
       "POST",
       `/v1/runs/${encodeURIComponent(runId)}/advance`
+    );
+  }
+
+  /** POST /v1/runs/{run_id}/clarify — answer intake questions (#15). */
+  async clarify(runId: string, req: ClarifyRequest): Promise<RunStateResponse> {
+    return this.requestJson<RunStateResponse>(
+      "POST",
+      `/v1/runs/${encodeURIComponent(runId)}/clarify`,
+      req
     );
   }
 

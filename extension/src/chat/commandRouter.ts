@@ -23,6 +23,7 @@ export type ChatCommand =
       extraGates: string[];
     }
   | { kind: "build"; description: string }
+  | { kind: "answer"; text: string }
   | { kind: "approve"; comments?: string }
   | { kind: "deny"; comments?: string }
   | { kind: "status" }
@@ -62,6 +63,12 @@ export function parseCommand(raw: string): ChatCommand {
       // folder's domain-knowledge/background-information.md".
       const description = rest.join(" ").trim();
       return { kind: "build", description };
+    }
+    case "answer":
+    case "clarify": {
+      // #15 (FR-INT-012): answers to intake questions, separated by `;`.
+      const text = rest.join(" ").trim();
+      return text ? { kind: "answer", text } : { kind: "help" };
     }
     case "approve":
     case "yes":

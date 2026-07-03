@@ -49,7 +49,7 @@ def test_headline_contracts_resolve() -> None:
     assert RunStartRequest(mode="gated", security_profile="restricted").mode == "gated"
     assert RunStarted(run_id="r", started_at="2026-05-31T00:00:00Z", mode="gated").mode
     assert EffectiveConfig().securityProfile == "restricted"
-    assert len(PHASE_IDS) == 12
+    assert len(PHASE_IDS) == 13
     assert len(MANDATORY_SECURE_GATES) == 4
     assert EventEnvelope(
         timestamp="2026-05-31T00:00:00Z", eventType="Boot", runId="r", phase="proposal"
