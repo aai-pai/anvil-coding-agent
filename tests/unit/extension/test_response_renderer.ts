@@ -23,7 +23,7 @@ describe("renderProgress", () => {
     const msg = renderProgress(
       state({ completed_phases: ["proposal", "factory-init"], current_phase: "specification" })
     );
-    expect(msg).toContain("2/12");
+    expect(msg).toContain("2/13");
     expect(msg).toContain("specification");
   });
 
