@@ -7,7 +7,19 @@
       "WebSearch",
       "Bash(git ls-tree *)",
       "Bash(python -m pytest -q)",
-      "Bash(python -c \"from anvil_runtime.app import create_app; app=create_app\\(execution_mode='offline-llm'\\); print\\('app builds OK; routes:', len\\(app.routes\\)\\)\")"
+      "Bash(python -c \"from anvil_runtime.app import create_app; app=create_app\\(execution_mode='offline-llm'\\); print\\('app builds OK; routes:', len\\(app.routes\\)\\)\")",
+      "Bash(python usd_to_cents.py 12.34)",
+      "Bash(python usd_to_cents.py 0.005)",
+      "Bash(python usd_to_cents.py abc)",
+      "Bash(python usd_to_cents.py -5)",
+      "Bash(python -m pytest -q -p no:cacheprovider)",
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(rm -f scratch_pytest.txt)",
+      "Bash(break)",
+      "Bash(git rm *)",
+      "Bash(rm -f QUICKSTART.md)",
+      "Bash(python -c \"import pptx; print\\('python-pptx', pptx.__version__\\)\")",
+      "Bash(python \"C:/Users/pcuser/AppData/Local/Temp/claude/c--Users-pcuser-openhands-based-coding-team/cc2e1676-7087-49d4-91d4-485e47b5419a/scratchpad/make_deck.py\")"
     ]
   }
 }

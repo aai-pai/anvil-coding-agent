@@ -1,99 +1,210 @@
-# Running Anvil
+# Running Anvil — Quickstart & Guide
 
-Post-v0.1.0 integration. The runtime can drive a project end-to-end over its REST
-API. Phase execution runs through a pluggable executor selected by the
-`ANVIL_EXECUTION_MODE` environment variable.
+Anvil turns a plain-English request into a working project by running it through a
+governed phase pipeline. This guide covers setup, the VS Code `@anvil` flow, the REST
+API, and what a run produces. (Supersedes the old `QUICKSTART.md` + `RUNNING.md`.)
+
+## The 3 moving parts
+
+1. **Runtime server** (Python) — Anvil's brain; runs the phases and calls OpenRouter.
+2. **Extension** (TypeScript) — the `@anvil` chat participant, loaded into VS Code.
+3. **VS Code Chat view** — the chat box that hosts `@anvil` (from GitHub Copilot Chat).
+
+You need **one API key**: an **OpenRouter** key, set on the *server*. (Copilot is just
+the chat window — it does no Anvil work, and its model dropdown does **not** control
+`@anvil`. Anvil uses its own OpenRouter models.)
+
+---
+
+## One-time setup
+
+```powershell
+# 0. Allow local scripts (npm + the launcher need this) — run once
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+
+# 1. Install the Python runtime + dependencies
+cd C:\Users\pcuser\openhands_based_coding_team
+pip install -e runtime
+
+# 2. Build the VS Code extension (only needed for the @anvil chat flow)
+cd extension
+npm install
+npm run build
+```
+
+3. In VS Code, install **"GitHub Copilot Chat"** (Extensions panel) if you don't
+   already have a chat box.
+
+> Re-run `pip install -e runtime` only if `runtime/pyproject.toml` (deps/metadata)
+> changes. Editing runtime `.py` code just needs a server restart, not a reinstall.
+
+---
 
 ## Execution modes
 
-| `ANVIL_EXECUTION_MODE` | Behavior | Needs API key |
+Selected by `ANVIL_EXECUTION_MODE` (or the launcher's `-Mode`):
+
+| Mode | Behavior | Needs key |
 |---|---|---|
-| `stub` (default) | Deterministic stub agents; no files written. The v0.1.0 test pipeline. | No |
-| `offline-llm` | Full real pipeline (routing → execution → artifact write → validation) with an **offline** LLM transport; writes placeholder artifacts. Proves the plumbing. | No |
-| `real` | Same pipeline calling **OpenRouter** for real; phases generate genuine artifact content. | Yes |
+| `stub` | Deterministic stub agents; no files written. The unit-test pipeline. | No |
+| `offline-llm` | Full pipeline (routing → execution → artifact write → validation) with an **offline** transport; writes placeholder artifacts. Proves the plumbing. | No |
+| `real` | Same pipeline calling **OpenRouter** for real; phases generate genuine content. | Yes |
 
-## Prerequisites
+`scripts\start-anvil.ps1` defaults to **`real`**. The bare module
+(`python -m uvicorn anvil_runtime.app:app`) defaults to **`stub`**.
 
-```bash
-pip install -e runtime            # installs fastapi, httpx, uvicorn, pydantic, pyyaml
-```
+---
 
-## Start the runtime server
+## Use it via VS Code `@anvil`
 
-The server writes artifacts under its current working directory, so run it from
-the workspace you want Anvil to build in:
-
-```bash
-# Offline smoke (no key) — proves the pipeline produces validated artifacts:
-cd /path/to/your/workspace
-ANVIL_EXECUTION_MODE=offline-llm \
-  PYTHONPATH=/path/to/repo/runtime \
-  python -m uvicorn anvil_runtime.app:app --host 127.0.0.1 --port 8765
-```
-
-```bash
-# Real run — generates real content via OpenRouter:
-export OPENROUTER_API_KEY=sk-or-...        # never logged; redacted from the audit trail
-cd /path/to/your/workspace
-ANVIL_EXECUTION_MODE=real \
-  PYTHONPATH=/path/to/repo/runtime \
-  python -m uvicorn anvil_runtime.app:app --host 127.0.0.1 --port 8765
-```
-
-On Windows PowerShell, set env vars first:
+### Step 1 — Start the server (leave the window open)
 
 ```powershell
-$env:ANVIL_EXECUTION_MODE = "real"
-$env:OPENROUTER_API_KEY = "sk-or-..."
-$env:PYTHONPATH = "C:\path\to\repo\runtime"
-python -m uvicorn anvil_runtime.app:app --host 127.0.0.1 --port 8765
+cd C:\Users\pcuser\openhands_based_coding_team
+$env:OPENROUTER_API_KEY = "sk-or-..."     # your key
+.\scripts\start-anvil.ps1                  # real mode, phase-aware routing
 ```
 
-The endpoint (`127.0.0.1:8765`) matches the VS Code extension's `API_BASE_URL`.
+Wait for `Uvicorn running on http://127.0.0.1:8765`. Verify in a browser:
+<http://127.0.0.1:8765/v1/health> → `{"status":"ok",...}`.
 
-## Drive a run over the API
+No key? Run offline (placeholder output): `.\scripts\start-anvil.ps1 -Mode offline-llm`.
 
-```bash
-BASE=http://127.0.0.1:8765
+Launcher options: `-Mode real|offline-llm|stub`, `-Workspace <dir>` (where `runs/`
+lives; default `...\workspace`), `-Port 8765`, `-Model <slug>` (force one model for
+every phase; omit to use the phase-aware defaults below).
 
-# Start a fully-autonomous run:
-curl -s -X POST $BASE/v1/runs \
-  -H 'content-type: application/json' \
-  -d '{"mode":"yolo","security_profile":"open"}'
+### Step 2 — Launch the extension
 
-# Inspect state (status, current phase, completed phases, pending gate):
-curl -s $BASE/v1/runs/<run_id>
+1. **File → Open Folder →** `...\openhands_based_coding_team\extension`
+2. Press **F5** → a second window **"[Extension Development Host]"** opens with
+   `@anvil` loaded. (Optionally open your target project folder in that window — runs
+   isolate under *its* `runs/`.)
 
-# Stream the audit/event trail (SSE):
-curl -s $BASE/v1/runs/<run_id>/events
+### Step 3 — Build something (plain English)
 
-# Fetch a produced artifact's path + checksum:
-curl -s $BASE/v1/artifacts/architecture
+In the second window, open Chat (**Ctrl+Alt+I**) and type:
+
+```
+@anvil build a CLI tool that converts Celsius to Fahrenheit
 ```
 
-For **secure** mode (`{"mode":"secure", ...}`) the run pauses at the four
-mandatory gates (post-proposal, post-architecture, post-blueprint,
-pre-deployment); approve each to continue:
+A real run takes ~1–2 minutes and costs a few cents.
 
-```bash
-curl -s -X POST $BASE/v1/runs/<run_id>/approve \
-  -H 'content-type: application/json' \
-  -d '{"gateId":"post-proposal","gateName":"Post-Proposal","approved":true,"requesterId":"me"}'
+### `@anvil` commands
+
+| Command | What it does |
+|---|---|
+| `build <description>` | Build from plain English (autonomous, isolated run) |
+| `start [mode] [profile]` | Start a run from an existing `background-information.md` |
+| `status` | Show current run state |
+| `approve` / `deny` | Resolve a pending approval gate (gated/secure modes) |
+| `rollback <phase>` | Roll back to a phase |
+| `force-advance` / `stop` | Override the supervisor |
+| `health` | Check the runtime is reachable |
+
+---
+
+## Use it via the REST API (no VS Code)
+
+```powershell
+$BASE = "http://127.0.0.1:8765"
+
+# health
+Invoke-RestMethod $BASE/v1/health
+
+# start an autonomous build (the task is the project request)
+$run = Invoke-RestMethod -Method Post $BASE/v1/runs -ContentType application/json `
+  -Body '{"mode":"yolo","security_profile":"open","task":"build a CLI that converts USD to cents"}'
+$run.run_id
+
+# inspect state
+Invoke-RestMethod "$BASE/v1/runs/$($run.run_id)"
 ```
 
-## What a run produces
+**Secure mode** pauses at four mandatory gates (post-proposal, post-architecture,
+post-blueprint, pre-deployment). Start with `"mode":"secure"`, then approve each:
 
-Each phase writes its canonical artifact under `docs/` (and `src/`, `tests/` for
-the coding phases) with an FR-AR-005 metadata header, and the supervisor
-validates each artifact before advancing (FR-SV-009). The full audit trail is in
-`logs/events.jsonl` (secrets redacted) and a human-readable summary in
-`logs/run-summary.log`.
-
-## VS Code extension
-
-```bash
-cd extension && npm install && npm run build   # produces dist/extension.js
+```powershell
+Invoke-RestMethod -Method Post "$BASE/v1/runs/$($run.run_id)/approve" `
+  -ContentType application/json `
+  -Body '{"gateId":"post-proposal","gateName":"Post-Proposal","approved":true,"requesterId":"me"}'
 ```
 
-Launch the extension host (F5 in VS Code) with the runtime server running; the
-`@anvil` chat participant talks to `127.0.0.1:8765`.
+(Equivalent `curl` works too; SSE event stream: `GET /v1/runs/<id>/events`.)
+
+---
+
+## Where output goes — one isolated folder per run
+
+Every `build` run is **self-contained** under `runs/`:
+
+```
+<workspace>\runs\<date>-<slug>\
+    domain-knowledge\background-information.md   <- your request, written here
+    docs\   src\   tests\   logs\                <- generated, phase by phase
+    .anvil\                                       <- run state / checkpoints
+```
+
+e.g. `workspace\runs\2026-06-26-build-a-cli-that-converts-usd-to-cents\`. This
+isolation means a fresh prompt is never overridden by unrelated files elsewhere, and
+runs never collide. `runs/` is gitignored (disposable) — copy a project out to keep it.
+
+### Phase-aware model routing
+
+By default phases route by tier (override per category with the env vars):
+
+| Phase group | Default model | Env override |
+|---|---|---|
+| Planning / design (proposal, spec, architecture, blueprint, plan) | `google/gemma-4-31b-it` | `ANVIL_PLANNING_MODEL` |
+| Coding (implementation, qa) | `deepseek/deepseek-v4-flash` | `ANVIL_CODING_MODEL` |
+| All phases (single model) | — | `ANVIL_MODEL` |
+
+### Complexity gating — simple tasks stay lean
+
+The proposal phase assesses the task's complexity and the supervisor runs only what's
+needed:
+
+- **simple** → proposal → spec → architecture → blueprint → plan → implementation
+  (5 canonical docs + `src/`). **No tests/packaging/deployment** — that's expected for
+  a trivial tool, not a bug.
+- **standard** → the above **+ qa** (tests).
+- **complex** → all 12 phases.
+
+Want tests on a small project? Describe it richer (e.g. "…with a CLI, validation, and
+a pytest suite") so it's rated standard/complex.
+
+### Failure records
+
+If a phase fails (even one later recovered by retry), Anvil writes a Markdown
+failure record to `<run>\docs\failure_records\FR-<NNN>-<slug>.md` with the run id,
+phase, reason, and recent events.
+
+### Audit trail
+
+`<run>\logs\events.jsonl` (one JSON event per line, secrets redacted) and a
+human-readable `<run>\logs\run-summary.log`.
+
+---
+
+## Run the code Anvil produced
+
+The generated project is plain source under the run's `src/`:
+
+```powershell
+cd C:\Users\pcuser\openhands_based_coding_team\workspace\runs\<date>-<slug>\src
+python <entrypoint>.py <args>
+```
+
+---
+
+## Troubleshooting
+
+- **`@anvil` says "fetch failed"** → the server (Step 1) isn't running, or not on port 8765.
+- **No second window on F5** → make sure the **`extension`** folder is the one open (not the repo root); reload after editing `launch.json`.
+- **No Chat view / `@anvil` missing** → install GitHub Copilot Chat, reload.
+- **npm fails with a PowerShell security error** → run the `Set-ExecutionPolicy` line above once.
+- **Real mode won't start** → it needs `OPENROUTER_API_KEY`; set it, or use `-Mode offline-llm`.
+- **A model error from OpenRouter** → the slug isn't available to your account; override with `ANVIL_PLANNING_MODEL` / `ANVIL_CODING_MODEL`.
+- **No tests in the output** → the task was rated *simple* (see complexity gating); describe it richer to include qa.
+- **Output is generic** → give a *specific* `build` description; a vague task yields a vague (but well-structured) skeleton.
