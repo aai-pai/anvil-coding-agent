@@ -4,6 +4,7 @@
 # Generated Anvil run workspaces (each run is self-contained & disposable)
 /runs/*
 !/runs/README.md
+/workspace/runs/
 
 # Python
 __pycache__/
