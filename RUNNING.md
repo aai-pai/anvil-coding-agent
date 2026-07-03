@@ -96,8 +96,10 @@ A real run takes ~1–2 minutes and costs a few cents.
 | Command | What it does |
 |---|---|
 | `build <description>` | Build from plain English (autonomous, isolated run) |
-| `start [mode] [profile]` | Start a run from an existing `background-information.md` |
+| `build` | Build from the open folder's `domain-knowledge/background-information.md` (copied into an isolated run) |
+| `start [mode] [profile]` | Start a run from an existing `background-information.md` (in place, unisolated) |
 | `status` | Show current run state |
+| `answer <a1>; <a2>; …` | Answer Anvil's clarifying questions (gated/secure runs) |
 | `approve` / `deny` | Resolve a pending approval gate (gated/secure modes) |
 | `rollback <phase>` | Roll back to a phase |
 | `force-advance` / `stop` | Override the supervisor |
@@ -156,20 +158,47 @@ By default phases route by tier (override per category with the env vars):
 
 | Phase group | Default model | Env override |
 |---|---|---|
-| Planning / design (proposal, spec, architecture, blueprint, plan) | `google/gemma-4-31b-it` | `ANVIL_PLANNING_MODEL` |
+| Planning / design / intake (intake, proposal, spec, architecture, blueprint, plan) | `google/gemma-4-31b-it` | `ANVIL_PLANNING_MODEL` |
 | Coding (implementation, qa) | `deepseek/deepseek-v4-flash` | `ANVIL_CODING_MODEL` |
 | All phases (single model) | — | `ANVIL_MODEL` |
+
+Other env knobs: `ANVIL_INPUT_CHAR_LIMIT` — per-file character cap when phase
+inputs are assembled into prompts (default 20,000; truncation emits an
+`InputTruncated` warning event, never silent).
 
 ### Complexity gating — simple tasks stay lean
 
 The proposal phase assesses the task's complexity and the supervisor runs only what's
 needed:
 
-- **simple** → proposal → spec → architecture → blueprint → plan → implementation
-  (5 canonical docs + `src/`). **No tests/packaging/deployment** — that's expected for
-  a trivial tool, not a bug.
+- **simple** → intake → proposal → spec → architecture → blueprint → plan →
+  implementation (5 canonical docs + `src/`). **No tests/packaging/deployment** —
+  that's expected for a trivial tool, not a bug.
 - **standard** → the above **+ qa** (tests).
-- **complex** → all 12 phases.
+- **complex** → all 13 phases.
+
+### Intake — completeness check before anything is built
+
+Every run starts with a small **intake** step that checks whether
+`background-information.md` says enough to build from:
+
+- **Interactive runs (`gated`/`secure`)**: if information is missing, the run
+  pauses with up to 5 questions — answer with `@anvil answer <a1>; <a2>; …`
+  (or `POST /v1/runs/<id>/clarify`). Answers are appended to the run's
+  `background-information.md` under `## Clarifications`, and intake re-checks
+  **once** (never a second pause).
+- **Autonomous runs (`yolo`, including `build`)**: never pause. Gaps are filled
+  from `anvil-instructions.md` defaults and recorded in the file under
+  `## Assumptions`, so you can always see what was assumed.
+
+### Standing instructions — `anvil-instructions.md`
+
+Anvil's equivalent of `copilot-instructions.md`: defaults for underspecified
+inputs, fallbacks, and conventions, injected into **every** phase prompt.
+Resolution precedence: `<run>/domain-knowledge/anvil-instructions.md` →
+`<workspace root>/anvil-instructions.md` → none. A file sitting next to a
+`build`-from-file source travels with the run. The better this file, the fewer
+questions intake asks.
 
 Want tests on a small project? Describe it richer (e.g. "…with a CLI, validation, and
 a pytest suite") so it's rated standard/complex.
@@ -184,6 +213,14 @@ phase, reason, and recent events.
 
 `<run>\logs\events.jsonl` (one JSON event per line, secrets redacted) and a
 human-readable `<run>\logs\run-summary.log`.
+
+### OKF artifacts
+
+Generated markdown artifacts follow Google's **Open Knowledge Format** (OKF
+v0.1): YAML frontmatter with `type`, `title`, `description`, `tags`,
+`timestamp` plus Anvil's lineage fields, and a generated `docs/index.md`
+listing every artifact — so other agents/tools can consume a run's docs
+directly.
 
 ---
 

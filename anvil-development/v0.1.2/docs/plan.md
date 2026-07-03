@@ -56,7 +56,36 @@ RUNNING.md updates (new commands, files, env vars); implementation log below.
 
 ## Implementation Log
 
-_(filled in as slices complete)_
+Baseline entering implementation: 243 tests. Final: **272 passed** (Python).
+
+- **Slice 1 ✅ COMPLETED** — `[IMPL-S1]`. `inputCharLimit` config + `ANVIL_INPUT_CHAR_LIMIT`
+  env; `LLMBackend(input_char_limit, event_bus)`; `InputTruncated` warning; also
+  landed `PhaseStep.context` early (needed for run-id on backend events). +3 tests.
+- **Slice 2 ✅ COMPLETED** — `[IMPL-S2]`. New `instructions/resolver.py`
+  (run > base precedence, 16k cap); `_instructions_block()` in doc/code prompts;
+  `build_manager(instructions=…)`; `InstructionsResolved` emitted from the
+  run-start route. +9 tests.
+- **Slice 3 ✅ COMPLETED** — `[IMPL-S3]`. `RunStartRequest.source_path` (400 on
+  missing / on `task`+`source_path`); slug from first heading; sibling
+  `anvil-instructions.md` copied (FR-INS-005). Extension: bare `build` →
+  `source_path`. +3 tests.
+- **Slice 4 ✅ COMPLETED** — `[IMPL-S4]`. `intake` as 13th canonical phase (first
+  in DAG); marker protocol `INTAKE:`/`QUESTION:`/`ASSUMPTION:` in
+  `LLMBackend._run_intake`; `awaiting_clarification` + `submit_clarification`
+  + `POST /clarify`; single-round bound; yolo assumption mode appends
+  `## Assumptions`. Extension: `answer` command, terminal status, question
+  rendering. 20 pre-existing tests updated for 13 phases; +10 new tests.
+- **Slice 5 ✅ COMPLETED** — `[IMPL-S5]` (committed by JC). OKF header fields in
+  `_document`; `OKF_TYPES`/`okf_type_for`; validator requires `type`/`title`;
+  supervisor writes `docs/index.md` on completion; cross-link prompt line.
+  +4 tests; 3 fixtures updated.
+- **Slice 6 ✅ COMPLETED** — final review. Offline-llm e2e sanity (source_path →
+  13 phases → OKF index + all new events verified live); RUNNING.md updated.
+  **Issue encountered:** Node.js is not installed on this development machine, so
+  `npm test` (vitest) and `npm run build` (tsc) for the extension could not be
+  run; TS changes (commandRouter/participant/runtimeClient/responseRenderer +
+  test updates) reviewed but **must be built/tested on a Node-equipped machine
+  before shipping the .vsix**.
 
 ---
 
