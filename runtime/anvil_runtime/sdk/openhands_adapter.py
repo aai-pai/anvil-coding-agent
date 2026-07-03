@@ -334,6 +334,11 @@ class LLMBackend:
             lines.append("Context from prior phases:\n" + ctx)
         if sections:
             lines.append("Write Markdown including these section headings: " + ", ".join(sections) + ".")
+        # #16 (FR-OKF-004): encourage OKF cross-links between sibling artifacts.
+        lines.append(
+            "When referencing other project documents, use relative markdown links "
+            "(e.g. [spec](/docs/spec.md))."
+        )
         lines.append("Respond with the document content only.")
         if step.phase == "proposal":
             lines.append(
@@ -469,10 +474,21 @@ class LLMBackend:
     def _document(self, step: PhaseStep, content: str) -> str:
         import yaml
 
+        from anvil_runtime.artifacts.schemas import okf_type_for
+
+        generated_at = self._clock().isoformat()
+        okf_type = okf_type_for(step.phase)
+        # #16 (FR-OKF-001): OKF standard fields first (type is the only field the
+        # OKF spec mandates), then Anvil's lineage fields as producer extensions.
         meta = {
+            "type": okf_type,
+            "title": f"{okf_type} — {self._root.name}",
+            "description": self._okf_description(content),
+            "tags": ["anvil", step.phase],
+            "timestamp": generated_at,
             "artifactId": f"{step.phase}-v1",
             "phase": step.phase,
-            "generatedAt": self._clock().isoformat(),
+            "generatedAt": generated_at,
             "derivedFrom": list(step.input_files) or ["(none)"],
         }
         front = "---\n" + yaml.safe_dump(meta, sort_keys=False) + "---\n"
@@ -487,6 +503,15 @@ class LLMBackend:
                 body.append("_See above._")
                 body.append("")
         return front + "\n".join(body) + "\n"
+
+    @staticmethod
+    def _okf_description(content: str, limit: int = 140) -> str:
+        """First non-heading content line, truncated (deterministic; FR-OKF-001)."""
+        for line in content.splitlines():
+            stripped = line.strip()
+            if stripped and not stripped.startswith("#") and not stripped.startswith("---"):
+                return stripped[:limit]
+        return ""
 
     @staticmethod
     def _has_heading(content: str, section: str) -> bool:

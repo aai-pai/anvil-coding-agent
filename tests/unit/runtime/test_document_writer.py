@@ -24,8 +24,13 @@ def _step() -> PhaseStep:
 
 def test_body_written_once_no_duplication(tmp_path: pathlib.Path) -> None:
     # FR-DOC-001: the body appears exactly once, not repeated per required section.
+    # (Asserted on the body: the OKF `description` header field legitimately
+    # carries the first content line, #16.)
+    from anvil_runtime.artifacts.metadata import split_front_matter
+
     doc = _backend(tmp_path)._document(_step(), "UNIQUE_BODY_MARKER full generated proposal.")
-    assert doc.count("UNIQUE_BODY_MARKER") == 1
+    _, body = split_front_matter(doc)
+    assert body.count("UNIQUE_BODY_MARKER") == 1
 
 
 def test_missing_required_sections_get_placeholders(tmp_path: pathlib.Path) -> None:
@@ -38,12 +43,15 @@ def test_missing_required_sections_get_placeholders(tmp_path: pathlib.Path) -> N
 
 def test_present_sections_kept_not_duplicated(tmp_path: pathlib.Path) -> None:
     # FR-DOC-002: sections the model produced are kept as-is and not re-added.
+    from anvil_runtime.artifacts.metadata import split_front_matter
+
     content = "## Problem Statement\n\nThe specific problem.\n\n## Scope\n\nThe specific scope."
     doc = _backend(tmp_path)._document(_step(), content)
-    assert doc.count("## Problem Statement") == 1
-    assert doc.count("## Scope") == 1
-    assert doc.count("The specific problem.") == 1
-    assert "_See above._" not in doc
+    _, body = split_front_matter(doc)
+    assert body.count("## Problem Statement") == 1
+    assert body.count("## Scope") == 1
+    assert body.count("The specific problem.") == 1
+    assert "_See above._" not in body
 
 
 class _CollectingBus:
@@ -116,3 +124,45 @@ def test_generated_document_passes_validator(tmp_path: pathlib.Path) -> None:
         "proposal", ["docs/proposal.md"]
     )
     assert result.valid is True
+
+
+def test_document_header_is_okf_conformant(tmp_path: pathlib.Path) -> None:
+    # #16 (FR-OKF-001): OKF standard fields present alongside the lineage fields.
+    from anvil_runtime.artifacts.metadata import split_front_matter
+
+    doc = _backend(tmp_path)._document(
+        _step(), "A short proposal for a to-do list app.\n\nMore detail."
+    )
+    meta, _ = split_front_matter(doc)
+    assert meta["type"] == "Proposal"
+    assert meta["title"].startswith("Proposal — ")
+    assert meta["description"] == "A short proposal for a to-do list app."
+    assert meta["tags"] == ["anvil", "proposal"]
+    assert meta["timestamp"] == meta["generatedAt"]
+    # Lineage fields intact (OKF producer extensions).
+    assert meta["artifactId"] == "proposal-v1"
+    assert meta["phase"] == "proposal"
+    assert meta["derivedFrom"]
+
+
+def test_validator_rejects_document_missing_okf_type(tmp_path: pathlib.Path) -> None:
+    # #16 (FR-OKF-002): `type`/`title` are now required metadata.
+    target = tmp_path / "docs" / "proposal.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        "---\nartifactId: proposal-v1\nphase: proposal\ngeneratedAt: t\n"
+        "derivedFrom: [x]\n---\n# Proposal\n\n## Problem Statement\np\n## Scope\ns\n",
+        encoding="utf-8",
+    )
+    result = ArtifactValidator(workspace_root=str(tmp_path)).validate(
+        "proposal", ["docs/proposal.md"]
+    )
+    assert result.valid is False
+    assert any("type" in issue.detail for issue in result.issues)
+    assert any("title" in issue.detail for issue in result.issues)
+
+
+def test_doc_prompt_encourages_cross_links(tmp_path: pathlib.Path) -> None:
+    # #16 (FR-OKF-004).
+    prompt = _backend(tmp_path)._doc_prompt(_step())
+    assert "relative markdown links" in prompt

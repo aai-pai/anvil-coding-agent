@@ -357,6 +357,33 @@ class DevelopmentManager:
                 result[rel] = compute_checksum(target)
         return result
 
+    def _write_run_index(self, ctx: _RunContext) -> None:
+        """Write ``docs/index.md`` — an OKF index of the run's artifacts (#16).
+
+        FR-OKF-003: deterministic scan of ``docs/*.md`` frontmatter, no LLM call.
+        Supervisor-owned like failure records, so write errors never break a run.
+        """
+        import pathlib
+
+        try:
+            from anvil_runtime.artifacts.metadata import split_front_matter
+
+            docs = pathlib.Path(self._root) / "docs"
+            if not docs.is_dir():
+                return
+            lines = ["# Index", ""]
+            for path in sorted(docs.glob("*.md")):
+                if path.name == "index.md":
+                    continue
+                meta, _ = split_front_matter(path.read_text(encoding="utf-8"))
+                okf_type = str(meta.get("type") or "Document")
+                description = str(meta.get("description") or "").strip()
+                suffix = f" — {description}" if description else ""
+                lines.append(f"- **{okf_type}**: [{path.name}](/docs/{path.name}){suffix}")
+            (docs / "index.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        except Exception:  # noqa: BLE001 - diagnostics must never fail a run
+            pass
+
     def _write_failure_record(self, ctx: _RunContext, packet) -> None:  # noqa: ANN001
         """Persist an FR-style failure record (FR-REC-001).
 
@@ -384,6 +411,7 @@ class DevelopmentManager:
         next_phase = self._dag.next_phase(ctx.completed | ctx.excluded)
         if next_phase is None:
             ctx.status = "completed"
+            self._write_run_index(ctx)
             self._emit(run_id, "RunCompleted", "")
             return self._progress(ctx)
         # Pre-phase gate (e.g., pre-deployment).
