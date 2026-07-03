@@ -46,6 +46,67 @@ def test_present_sections_kept_not_duplicated(tmp_path: pathlib.Path) -> None:
     assert "_See above._" not in doc
 
 
+class _CollectingBus:
+    """Minimal EventBus stand-in capturing emitted envelopes."""
+
+    def __init__(self) -> None:
+        self.events = []
+
+    def emit(self, envelope) -> None:  # noqa: ANN001
+        self.events.append(envelope)
+
+
+def test_default_input_limit_reads_large_file_in_full(tmp_path: pathlib.Path) -> None:
+    # FR-CTX-001: the old hardcoded 2,500-char cap is gone; a rich input file is
+    # read in full under the 20,000-char default.
+    rel = "domain-knowledge/background-information.md"
+    target = tmp_path / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("x" * 5_000 + "TAIL_MARKER", encoding="utf-8")
+    backend = _backend(tmp_path)
+    ctx = backend._read_inputs(PhaseStep(phase="proposal", instruction="", input_files=[rel]))
+    assert "TAIL_MARKER" in ctx
+
+
+def test_truncation_emits_warning_event(tmp_path: pathlib.Path) -> None:
+    # FR-CTX-002: an actual cut emits InputTruncated naming file, size, and limit.
+    rel = "docs/spec.md"
+    target = tmp_path / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("y" * 300, encoding="utf-8")
+    bus = _CollectingBus()
+    backend = LLMBackend(
+        provider=object(), workspace_root=str(tmp_path),
+        input_char_limit=100, event_bus=bus,
+    )
+    step = PhaseStep(
+        phase="architecture", instruction="", input_files=[rel],
+        context={"run_id": "run-42"},
+    )
+    ctx = backend._read_inputs(step)
+    assert len(ctx) < 300
+    assert len(bus.events) == 1
+    event = bus.events[0]
+    assert event.eventType == "InputTruncated"
+    assert event.severity == "warning"
+    assert event.runId == "run-42"
+    assert event.data == {"file": rel, "size": 300, "limit": 100}
+
+
+def test_no_truncation_no_event(tmp_path: pathlib.Path) -> None:
+    rel = "docs/spec.md"
+    target = tmp_path / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("short", encoding="utf-8")
+    bus = _CollectingBus()
+    backend = LLMBackend(
+        provider=object(), workspace_root=str(tmp_path),
+        input_char_limit=100, event_bus=bus,
+    )
+    backend._read_inputs(PhaseStep(phase="blueprint", instruction="", input_files=[rel]))
+    assert bus.events == []
+
+
 def test_generated_document_passes_validator(tmp_path: pathlib.Path) -> None:
     doc = _backend(tmp_path)._document(_step(), "placeholder body")
     target = tmp_path / "docs" / "proposal.md"

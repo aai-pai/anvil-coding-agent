@@ -20,6 +20,9 @@ from pydantic import BaseModel, Field
 DEFAULT_MODE = "gated"
 DEFAULT_SECURITY_PROFILE = "restricted"
 DEFAULT_MAX_RETRIES_PER_PHASE = 2
+# #18 (spec FR-CTX-001): per-file character cap applied when phase inputs are
+# assembled into an LLM prompt; env override ANVIL_INPUT_CHAR_LIMIT.
+DEFAULT_INPUT_CHAR_LIMIT = 20_000
 DEFAULT_MCP_DISCOVERY_TIMEOUT_SECONDS = 5
 DEFAULT_ARTIFACT_VALIDATION_TIMEOUT_SECONDS = 30
 DEFAULT_DRIFT_CHECK_TIMEOUT_SECONDS = 60
@@ -69,12 +72,15 @@ class EffectiveConfig(BaseModel):
     # #11 (FR-CX-006): optional complexity-tier override; when set it wins over the
     # proposal phase's assessed tier. None defers to the proposal's assessment.
     complexityTier: str | None = None
+    # #18 (FR-CTX-001): per-file input character limit for prompt assembly.
+    inputCharLimit: int = DEFAULT_INPUT_CHAR_LIMIT
 
 
 __all__ = [
     "DEFAULT_MODE",
     "DEFAULT_SECURITY_PROFILE",
     "DEFAULT_MAX_RETRIES_PER_PHASE",
+    "DEFAULT_INPUT_CHAR_LIMIT",
     "DEFAULT_MCP_DISCOVERY_TIMEOUT_SECONDS",
     "DEFAULT_ARTIFACT_VALIDATION_TIMEOUT_SECONDS",
     "DEFAULT_DRIFT_CHECK_TIMEOUT_SECONDS",

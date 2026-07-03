@@ -32,6 +32,9 @@ class PhaseStep(BaseModel):
     subtask: str | None = None
     output_paths: list[str] = Field(default_factory=list)
     input_files: list[str] = Field(default_factory=list)
+    # Supervisor phase_context passthrough (run_id per FR-EVT-002; #15 adds
+    # clarification_mode). Keeps backend events attributable to the active run.
+    context: dict[str, object] = Field(default_factory=dict)
 
 
 class StepResult(BaseModel):
@@ -107,11 +110,18 @@ class LLMBackend:
         provider: "object",
         workspace_root: str = ".",
         clock: "object | None" = None,
+        input_char_limit: int | None = None,
+        event_bus: "object | None" = None,
     ) -> None:
+        from anvil_runtime.config.schema import DEFAULT_INPUT_CHAR_LIMIT
+
         self._provider = provider
         self._root = __import__("pathlib").Path(workspace_root)
         self._counter = 0
         self._sessions: dict[str, AgentRuntimeConfig] = {}
+        # #18 (FR-CTX-001): per-file cap when assembling inputs into prompts.
+        self._input_char_limit = input_char_limit or DEFAULT_INPUT_CHAR_LIMIT
+        self._events = event_bus
         from datetime import datetime, timezone
 
         self._clock = clock or (lambda: datetime.now(timezone.utc))
@@ -191,13 +201,31 @@ class LLMBackend:
 
     # -- prompts ----------------------------------------------------------
 
-    def _read_inputs(self, step: PhaseStep, limit: int = 2500) -> str:
+    def _read_inputs(self, step: PhaseStep) -> str:
+        limit = self._input_char_limit
         chunks: list[str] = []
         for rel in step.input_files:
             target = self._root / rel
             if target.is_file():
-                chunks.append(f"--- {rel} ---\n{target.read_text(encoding='utf-8')[:limit]}")
+                text = target.read_text(encoding="utf-8")
+                if len(text) > limit:
+                    # FR-CTX-002: truncation is never silent.
+                    self._emit_truncation(step, rel, len(text), limit)
+                    text = text[:limit]
+                chunks.append(f"--- {rel} ---\n{text}")
         return "\n\n".join(chunks)
+
+    def _emit_truncation(self, step: PhaseStep, rel: str, size: int, limit: int) -> None:
+        if self._events is None:
+            return
+        from anvil_runtime.core.phase_contracts import EventEnvelope
+
+        self._events.emit(EventEnvelope(
+            timestamp=self._clock(), eventType="InputTruncated",
+            runId=str(step.context.get("run_id", "") or ""),
+            phase=step.phase, severity="warning",
+            data={"file": rel, "size": size, "limit": limit},
+        ))
 
     def _doc_prompt(self, step: PhaseStep) -> str:
         sections = self._required_sections(step.phase)

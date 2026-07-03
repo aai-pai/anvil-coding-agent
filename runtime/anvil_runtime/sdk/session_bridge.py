@@ -60,6 +60,7 @@ class SessionBridge:
             subtask=subtask,
             output_paths=list(payload.output_paths),
             input_files=list(payload.input_files),
+            context=dict(payload.phase_context),
         )
         result = self._adapter.run_phase_step(session_id, step)
         if self._usage is not None and result.usage:

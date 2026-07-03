@@ -85,8 +85,13 @@ def _build_real_manager(
     coding_model = os.environ.get("ANVIL_CODING_MODEL")
     if coding_model:
         overrides.update(coding=coding_model, debugging=coding_model)
+    # #18 (FR-CTX-001): env override > config field > default.
+    input_char_limit = int(os.environ.get("ANVIL_INPUT_CHAR_LIMIT") or cfg.inputCharLimit)
+    backend = LLMBackend(
+        provider, workspace_root, input_char_limit=input_char_limit, event_bus=bus
+    )
     bridge = SessionBridge(
-        adapter=OpenHandsAdapter(backend=LLMBackend(provider, workspace_root)),
+        adapter=OpenHandsAdapter(backend=backend),
         model_router=ModelRouter(subtask_models=overrides or None, event_bus=bus),
         usage_tracker=UsageTracker(budgets=cfg.tokenBudgetPerPhase, event_bus=bus),
         security_profile=cfg.securityProfile,
