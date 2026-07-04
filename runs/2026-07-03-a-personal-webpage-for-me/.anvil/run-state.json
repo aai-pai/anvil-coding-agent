@@ -1,0 +1,73 @@
+{
+  "runStateVersion": "0.1.0",
+  "runs": {
+    "36eb8beb92b44eb7b3d7073ea6457468": {
+      "completed_phases": [
+        {
+          "checksums": {
+            "domain-knowledge/background-information.md": "55e943d3ff45a1ac7b00a27954a7c38d3477a88416617907b556854f7996d328"
+          },
+          "completed_at": "2026-07-03T23:54:24.364019+00:00",
+          "phase": "intake"
+        },
+        {
+          "checksums": {
+            "docs/proposal.md": "2c3efd01214870d1b58a87b50a2d3821fbc69b3e47b2b10bd3133a4d5634dcbf"
+          },
+          "completed_at": "2026-07-03T23:54:48.650120+00:00",
+          "phase": "proposal"
+        },
+        {
+          "checksums": {
+            "docs/GENERATED.md": "6eab70d8b054f14648d2e89cda99163b8b85c36e07e27651599c09b8c7668743",
+            "logs/GENERATED.md": "004426eca78a81e2291ac8d9a40a09adf1c4ad51a1df3d712d11498b326b2dff",
+            "src/GENERATED.md": "3faf5331de3b4b9e54b0c72d967fe17b204d61cf23ed248f082aa3ead74539d7",
+            "tests/GENERATED.md": "fa887d511fd06af6da3f0c895ff580d395f6b5f5bb15623c9427912feee9a76a"
+          },
+          "completed_at": "2026-07-03T23:55:04.293495+00:00",
+          "phase": "factory-init"
+        },
+        {
+          "checksums": {
+            "docs/spec.md": "028c9f99d3b8b23109d5bb5be30aebacbbcc63cb17e6ef6e6b64b281759044dd"
+          },
+          "completed_at": "2026-07-03T23:55:35.442989+00:00",
+          "phase": "specification"
+        },
+        {
+          "checksums": {
+            "docs/architecture.md": "39a065c6d6323c48aac9bfeed9b515c54a7428940f664b858bda9413e328d302"
+          },
+          "completed_at": "2026-07-03T23:55:53.517283+00:00",
+          "phase": "architecture"
+        },
+        {
+          "checksums": {
+            "docs/blueprint.md": "c3a06f1819b512a3f86e85d5002342e953b5dc8268d8e44c1a4fc4f51a281943"
+          },
+          "completed_at": "2026-07-03T23:56:03.081895+00:00",
+          "phase": "blueprint"
+        },
+        {
+          "checksums": {
+            "docs/plan.md": "9aa74d7a4745a4fb18290ff0ccfb5b739d9c39a4db6ba2fe3c46687ee28cd252"
+          },
+          "completed_at": "2026-07-03T23:56:13.818159+00:00",
+          "phase": "dev-plan"
+        },
+        {
+          "checksums": {
+            "src/index.html": "d1b973a2bd0d58a1d34958b88fd583e5ad2f952da2941d0bc174d0703320707e"
+          },
+          "completed_at": "2026-07-03T23:56:51.512521+00:00",
+          "phase": "implementation"
+        }
+      ],
+      "mode": "gated",
+      "retry_counters": {},
+      "runStateVersion": "0.1.0",
+      "run_id": "36eb8beb92b44eb7b3d7073ea6457468",
+      "stale_phases": []
+    }
+  }
+}
