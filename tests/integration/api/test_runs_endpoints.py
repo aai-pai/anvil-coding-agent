@@ -32,6 +32,50 @@ def _start(client: TestClient, mode: str = "gated", profile: str = "restricted")
     return body["run_id"]
 
 
+def test_resume_route_recovers_secure_run_after_server_restart(
+    tmp_path: pathlib.Path,
+) -> None:
+    # First server: secure run pauses at post-proposal, then the server "dies".
+    client1 = TestClient(create_app(workspace_root=str(tmp_path)))
+    run_id = _start(client1, mode="secure")
+    assert client1.get(f"/v1/runs/{run_id}").json()["status"] == "awaiting_approval"
+
+    # Second server over the same workspace: the run is gone from memory...
+    client2 = TestClient(create_app(workspace_root=str(tmp_path)))
+    assert client2.get(f"/v1/runs/{run_id}").status_code == 404
+    # ...until /resume rebuilds it from the checkpoint, pause included.
+    resp = client2.post(f"/v1/runs/{run_id}/resume")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "awaiting_approval"
+    assert body["pending_approval_gate"] == "post-proposal"
+    assert "proposal" in body["completed_phases"]
+    # The run is addressable again through the normal routes.
+    assert client2.get(f"/v1/runs/{run_id}").status_code == 200
+
+
+def test_resume_route_finds_isolated_task_run_by_scanning(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A task run lives in runs/<date>-<slug>/ under the server root.
+    client1 = TestClient(create_app(workspace_root=str(tmp_path)))
+    resp = client1.post(
+        "/v1/runs",
+        json={"mode": "yolo", "security_profile": "open", "task": "tiny tool"},
+    )
+    run_id = resp.json()["run_id"]
+
+    client2 = TestClient(create_app(workspace_root=str(tmp_path)))
+    resumed = client2.post(f"/v1/runs/{run_id}/resume")
+    assert resumed.status_code == 200, resumed.text
+    assert resumed.json()["status"] == "completed"  # yolo run had finished
+
+
+def test_resume_route_unknown_run_returns_404(tmp_path: pathlib.Path) -> None:
+    client = TestClient(create_app(workspace_root=str(tmp_path)))
+    assert client.post("/v1/runs/ghost/resume").status_code == 404
+
+
 def test_task_in_request_is_written_to_isolated_run_workspace(
     client: TestClient, tmp_path: pathlib.Path
 ) -> None:
@@ -250,6 +294,40 @@ def test_approval_advances_to_next_gate(client: TestClient) -> None:
     # Next mandatory secure gate is post-architecture.
     assert state["status"] == "awaiting_approval"
     assert state["pending_approval_gate"] == "post-architecture"
+
+
+def test_approving_wrong_gate_returns_409(client: TestClient) -> None:
+    # Pre-approving a future mandatory gate must be rejected, not recorded.
+    run_id = _start(client, mode="secure")  # paused at post-proposal
+    resp = client.post(
+        f"/v1/runs/{run_id}/approve",
+        json={
+            "gateId": "pre-deployment",
+            "gateName": "Pre-Deployment",
+            "approved": True,
+            "requesterId": "user-1",
+        },
+    )
+    assert resp.status_code == 409
+    state = client.get(f"/v1/runs/{run_id}").json()
+    assert state["status"] == "awaiting_approval"
+    assert state["pending_approval_gate"] == "post-proposal"
+
+
+def test_approval_without_pending_gate_returns_409(client: TestClient) -> None:
+    # An empty-gate approval must not resume a run that is not awaiting one
+    # (a stray chat `yes` used to revive stopped runs this way).
+    run_id = _start(client, mode="secure")
+    client.post(
+        f"/v1/runs/{run_id}/override",
+        json={"action": "stop", "reason": "halt", "requesterId": "user-1"},
+    )
+    resp = client.post(
+        f"/v1/runs/{run_id}/approve",
+        json={"gateId": "", "gateName": "", "approved": True, "requesterId": "user-1"},
+    )
+    assert resp.status_code == 409
+    assert client.get(f"/v1/runs/{run_id}").json()["status"] == "stopped"
 
 
 def test_denied_approval_keeps_run_paused(client: TestClient) -> None:

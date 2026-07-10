@@ -96,9 +96,10 @@ export function parseCommand(raw: string): ChatCommand {
         targetPhase: rest[0],
         reason: joinOrUndefined(rest.slice(1)) ?? "user rollback",
       };
+    // Note: no bare `advance` alias — this override bypasses a pending
+    // approval gate, so the command must be explicit about forcing.
     case "force":
     case "force-advance":
-    case "advance":
       return {
         kind: "override",
         action: "force-advance",

@@ -162,6 +162,72 @@ def start_run(
     return started
 
 
+def _find_run_workspace(state, run_id: str) -> str | None:
+    """Locate the workspace whose checkpoint container holds ``run_id``.
+
+    Checks the server root first, then each isolated ``runs/<date>-<slug>/``
+    workspace beneath it. Returns None when the run is unknown everywhere.
+    """
+    from anvil_runtime.state.checkpoint_store import CheckpointStore
+
+    candidates = [pathlib.Path(state.workspace_root)]
+    runs_dir = pathlib.Path(state.workspace_root) / "runs"
+    if runs_dir.is_dir():
+        candidates.extend(p for p in sorted(runs_dir.iterdir()) if p.is_dir())
+    for root in candidates:
+        if CheckpointStore(root).load_run_state(run_id) is not None:
+            return str(root)
+    return None
+
+
+@router.post("/{run_id}/resume", response_model=RunStateResponse)
+def resume(
+    run_id: str,
+    http_request: Request,
+    defer: bool = False,
+    workspace: str | None = None,
+) -> RunStateResponse:
+    """``POST /v1/runs/{run_id}/resume`` — restore a run from its checkpoint.
+
+    Rebuilds the run's manager after a server restart (rehydrating gates,
+    complexity tier, and completed phases from ``.anvil/run-state.json``),
+    re-validates checkpoints, and — unless ``defer=true`` — advances to the
+    next pause point. ``workspace`` pinpoints a client-chosen root the server
+    cannot discover by scanning its own ``runs/``.
+    """
+    state = http_request.app.state
+    handle = state.runs.get(run_id)
+    if handle is None:
+        workspace_root = workspace or _find_run_workspace(state, run_id)
+        if workspace_root is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No persisted state found for run '{run_id}'",
+            )
+        if workspace_root == state.workspace_root:
+            handle = state.default_handle
+        else:
+            from anvil_runtime.app import RunHandle, build_manager
+
+            resolved = resolve_instructions(workspace_root, state.workspace_root)
+            manager, bus = build_manager(
+                workspace_root, state.execution_mode, state.config,
+                state.secret_adapter, instructions=resolved.text,
+            )
+            handle = RunHandle(manager, bus, workspace_root)
+    try:
+        handle.manager.resume_run(run_id)
+    except KeyError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No persisted state found for run '{run_id}'",
+        )
+    state.runs[run_id] = handle
+    if not defer:
+        handle.manager.run_until_pause(run_id)
+    return _to_state_response(handle.manager.get_progress(run_id))
+
+
 @router.post("/{run_id}/advance", response_model=RunStateResponse)
 def advance(
     run_id: str,
@@ -209,6 +275,8 @@ def approve(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"Unknown run '{run_id}'"
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     # Only a granted approval clears the pause and lets the run proceed.
     if decision.approved:
         manager.run_until_pause(run_id)

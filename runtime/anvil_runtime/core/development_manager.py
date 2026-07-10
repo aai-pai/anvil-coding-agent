@@ -12,7 +12,9 @@ DAG is the durable, parallel-ready contract.
 
 from __future__ import annotations
 
+import functools
 import os
+import threading
 import uuid
 from datetime import datetime, timezone
 from typing import Callable, Literal
@@ -143,6 +145,22 @@ class _RunContext:
         self.pending_questions: list[str] = []
 
 
+def _locked(method: Callable) -> Callable:
+    """Serialize a run-scoped method on that run's lock.
+
+    FastAPI executes sync routes on a threadpool, so two requests can hit the
+    same run concurrently; per-run reentrant locks make each public operation
+    atomic without serializing unrelated runs against each other.
+    """
+
+    @functools.wraps(method)
+    def wrapper(self: "DevelopmentManager", run_id: str, *args: object, **kwargs: object):
+        with self._run_lock(run_id):
+            return method(self, run_id, *args, **kwargs)
+
+    return wrapper
+
+
 class DevelopmentManager:
     """Coordinates phase lifecycle, approvals, retries, drift checks, and resume."""
 
@@ -162,6 +180,7 @@ class DevelopmentManager:
         artifact_validator: object | None = None,
         drift_checker: object | None = None,
         drift_context_provider: Callable[[str], object] | None = None,
+        retry_sleeper: Callable[[float], None] | None = None,
     ) -> None:
         self._root = workspace_root
         self._config = config or EffectiveConfig()
@@ -183,7 +202,17 @@ class DevelopmentManager:
         self._validator = artifact_validator
         self._drift_checker = drift_checker
         self._drift_context_provider = drift_context_provider
+        # NFR-RB-002: waits between self-heal retries. Injected as time.sleep
+        # for real LLM execution (rate-limit protection); a no-op for stub /
+        # offline modes, where there is no provider to protect.
+        self._retry_sleep = retry_sleeper or (lambda _seconds: None)
         self._runs: dict[str, _RunContext] = {}
+        self._locks: dict[str, threading.RLock] = {}
+        self._locks_guard = threading.Lock()
+
+    def _run_lock(self, run_id: str) -> threading.RLock:
+        with self._locks_guard:
+            return self._locks.setdefault(run_id, threading.RLock())
 
     # -- lifecycle --------------------------------------------------------
 
@@ -193,6 +222,11 @@ class DevelopmentManager:
         ctx.pre_gates, ctx.post_gates = self._gate_maps(request)
         self._runs[run_id] = ctx
         self._checkpoints.initialize_run(run_id, request.mode)
+        # Gates must survive a restart: a resumed secure run with empty gate
+        # maps would silently skip every mandatory approval.
+        self._checkpoints.save_run_meta(
+            run_id, pre_gates=dict(ctx.pre_gates), post_gates=dict(ctx.post_gates)
+        )
         self._emit(run_id, "SupervisorStarted", "", data={
             "mode": request.mode,
             "security_profile": request.security_profile,
@@ -224,11 +258,14 @@ class DevelopmentManager:
 
     # -- single-phase dispatch -------------------------------------------
 
+    @_locked
     def dispatch_phase(self, run_id: str, phase_id: str) -> PhaseDispatchResult:
         ctx = self._require_run(run_id)
         if not self._registry.has(phase_id):
             raise KeyError(f"Unknown phase '{phase_id}'")
-        ready = self._dag.ready_phases(ctx.completed)
+        # Tier-excluded phases satisfy prerequisites just as they do in step()'s
+        # next-phase selection — disagreeing here would spin run_until_pause.
+        ready = self._dag.ready_phases(ctx.completed | ctx.excluded)
         if phase_id not in ready:
             return PhaseDispatchResult(
                 run_id=run_id, phase=phase_id, status="blocked",
@@ -243,18 +280,37 @@ class DevelopmentManager:
         payload = build_invocation_payload(contract, phase_context=phase_context)
         self._emit(run_id, "PhaseStarted", phase_id)
         agent = self._factory.create(phase_id)
-        event = self._executor.run(agent, payload)
         attempt = self._retries.attempts(run_id, phase_id) + 1
+        # An executor crash (LLM/network/IO error) must enter the same
+        # retry/escalation path as a reported failure, or the run wedges in
+        # "running" with no failure record (FR-REC-001).
+        try:
+            event = self._executor.run(agent, payload)
+        except Exception as exc:
+            event = self._failure_event(phase_id, exc)
         if event.status != "success":
             return self._handle_failure(ctx, phase_id, event, attempt)
         # Post-phase gates: artifact validation (FR-SV-009) then drift (FR-SV-010).
-        gate_failure = self._post_phase_checks(ctx, phase_id, event)
+        try:
+            gate_failure = self._post_phase_checks(ctx, phase_id, event)
+        except Exception as exc:
+            gate_failure = self._failure_event(phase_id, exc)
         if gate_failure is not None:
             return self._handle_failure(ctx, phase_id, gate_failure, attempt)
         self._record_success(ctx, phase_id, event)
         return PhaseDispatchResult(
             run_id=run_id, phase=phase_id, status="success",
             attempt=attempt, complete_event=event,
+        )
+
+    @staticmethod
+    def _failure_event(phase_id: str, exc: Exception) -> PhaseCompleteEvent:
+        """A synthetic failure event for an exception escaping a phase dispatch."""
+        return PhaseCompleteEvent(
+            phase_name=phase_id,
+            status="failure",
+            duration_ms=0,
+            failure_reason=f"{type(exc).__name__}: {exc}",
         )
 
     def _post_phase_checks(
@@ -342,6 +398,9 @@ class DevelopmentManager:
         if phase_id == "proposal":
             tier = self._config.complexityTier or event.complexity_tier
             ctx.excluded = excluded_for_tier(tier)
+            self._checkpoints.save_run_meta(
+                ctx.run_id, excluded_phases=sorted(ctx.excluded)
+            )
             self._emit(ctx.run_id, "ComplexityAssessed", phase_id, data={
                 "tier": tier,
                 "active": [p for p in self._dag.phases if p not in ctx.excluded],
@@ -397,6 +456,7 @@ class DevelopmentManager:
 
     # -- orchestration loop ----------------------------------------------
 
+    @_locked
     def step(self, run_id: str) -> RunProgress:
         """Advance exactly one phase (or stop at a gate/completion).
 
@@ -436,6 +496,7 @@ class DevelopmentManager:
             return self._pause_for_gate(ctx, post_gate, next_phase)
         return self._progress(ctx)
 
+    @_locked
     def run_until_pause(self, run_id: str) -> RunProgress:
         """Advance phases serially until a gate, escalation, stop, or completion."""
         ctx = self._require_run(run_id)
@@ -449,6 +510,10 @@ class DevelopmentManager:
         """Dispatch a phase, retrying on failure within the budget."""
         result = self.dispatch_phase(ctx.run_id, phase_id)
         while result.status == "failure":
+            # NFR-RB-002: back off before re-dispatching so retries never
+            # hammer a rate-limited provider in a tight loop.
+            failures = self._retries.attempts(ctx.run_id, phase_id)
+            self._retry_sleep(self._retries.backoff_seconds(failures))
             result = self.dispatch_phase(ctx.run_id, phase_id)
         return result
 
@@ -458,6 +523,7 @@ class DevelopmentManager:
     def _pause_for_gate(self, ctx: _RunContext, gate: str, phase: str) -> RunProgress:
         ctx.status = "awaiting_approval"
         ctx.pending_gate = gate
+        self._checkpoints.save_run_meta(ctx.run_id, pending_gate=gate)
         self._emit(ctx.run_id, "ApprovalRequired", phase, data={"gate": gate})
         return self._progress(ctx, current_phase=phase)
 
@@ -474,11 +540,13 @@ class DevelopmentManager:
     ) -> RunProgress:
         ctx.status = "awaiting_clarification"
         ctx.pending_questions = list(questions)
+        self._checkpoints.save_run_meta(ctx.run_id, pending_questions=list(questions))
         self._emit(ctx.run_id, "ClarificationRequired", "intake", data={
             "questions": list(questions), "round": ctx.clarification_round,
         })
         return self._progress(ctx, current_phase="intake")
 
+    @_locked
     def submit_clarification(
         self, run_id: str, answers: list[str]
     ) -> ClarificationDecision:
@@ -500,6 +568,11 @@ class DevelopmentManager:
         ctx.clarification_round += 1
         ctx.pending_questions = []
         ctx.status = "running"
+        self._checkpoints.save_run_meta(
+            run_id,
+            clarification_round=ctx.clarification_round,
+            pending_questions=[],
+        )
         self._emit(run_id, "ClarificationReceived", "intake", data={
             "answers": len(answers), "round": ctx.clarification_round,
         })
@@ -525,13 +598,25 @@ class DevelopmentManager:
 
     # -- approvals & overrides -------------------------------------------
 
+    @_locked
     def submit_approval(self, run_id: str, request: ApprovalRequest) -> ApprovalDecision:
         ctx = self._require_run(run_id)
+        # A decision is only valid against the gate the run is actually paused
+        # at: anything else could pre-approve future mandatory gates or revive
+        # a stopped/escalated/completed run.
+        if ctx.status != "awaiting_approval" or ctx.pending_gate is None:
+            raise ValueError("no approval is pending for this run")
+        if request.gateId != ctx.pending_gate:
+            raise ValueError(
+                f"gate '{request.gateId}' is not the pending gate '{ctx.pending_gate}'"
+            )
         if request.approved:
             ctx.approved_gates.add(request.gateId)
-            if ctx.pending_gate == request.gateId:
-                ctx.pending_gate = None
+            ctx.pending_gate = None
             ctx.status = "running"
+            self._checkpoints.save_run_meta(
+                run_id, approved_gates=sorted(ctx.approved_gates), pending_gate=None
+            )
             self._emit(run_id, "ApprovalGranted", "", data={
                 "gate": request.gateId, "requester": request.requesterId,
             })
@@ -552,6 +637,7 @@ class DevelopmentManager:
             approved=gate_id in ctx.approved_gates,
         )
 
+    @_locked
     def apply_override(self, run_id: str, override: OverrideRequest) -> OverrideResult:
         ctx = self._require_run(run_id)
         if override.action == "stop":
@@ -564,6 +650,12 @@ class DevelopmentManager:
             if not override.targetPhase:
                 raise ValueError("rollback override requires targetPhase")
             plan = self.rollback(run_id, override.targetPhase, override.reason)
+            # Rolling back abandons any pause that was active at the old point.
+            ctx.pending_gate = None
+            ctx.pending_questions = []
+            self._checkpoints.save_run_meta(
+                run_id, pending_gate=None, pending_questions=[]
+            )
             ctx.status = "running"
             return OverrideResult(
                 status="accepted", action="rollback", targetPhase=plan.target_phase,
@@ -572,6 +664,9 @@ class DevelopmentManager:
         if ctx.pending_gate:
             ctx.approved_gates.add(ctx.pending_gate)
             ctx.pending_gate = None
+            self._checkpoints.save_run_meta(
+                run_id, approved_gates=sorted(ctx.approved_gates), pending_gate=None
+            )
         ctx.status = "running"
         self._emit(run_id, "OverrideForceAdvance", "", severity="warning", data={
             "reason": override.reason,
@@ -580,6 +675,7 @@ class DevelopmentManager:
 
     # -- rollback & resume -----------------------------------------------
 
+    @_locked
     def rollback(self, run_id: str, target_phase: str, reason: str) -> RollbackPlan:
         ctx = self._require_run(run_id)
         if not self._registry.has(target_phase):
@@ -597,6 +693,7 @@ class DevelopmentManager:
             invalidated_phases=affected, stale_phases=affected, reason=reason,
         )
 
+    @_locked
     def resume_run(self, run_id: str) -> ResumePlan:
         state = self._checkpoints.load_run_state(run_id)
         if state is None:
@@ -605,6 +702,21 @@ class DevelopmentManager:
         if ctx is None:
             ctx = _RunContext(run_id, state.mode)
             self._runs[run_id] = ctx
+        # Rehydrate persisted orchestration state — approval gates, complexity
+        # tier, and the clarification round — not just the completed set.
+        ctx.pre_gates = dict(state.pre_gates)
+        ctx.post_gates = dict(state.post_gates)
+        ctx.approved_gates = set(state.approved_gates)
+        ctx.excluded = set(state.excluded_phases)
+        ctx.clarification_round = state.clarification_round
+        # A pause that was active at shutdown is restored, not skipped: a
+        # post-gate is only ever checked in the step that completed its phase.
+        if state.pending_gate and not self._gate_satisfied(ctx, state.pending_gate):
+            ctx.status = "awaiting_approval"
+            ctx.pending_gate = state.pending_gate
+        elif state.pending_questions:
+            ctx.status = "awaiting_clarification"
+            ctx.pending_questions = list(state.pending_questions)
         ctx.completed = self._checkpoints.completed_phase_ids(run_id)
         invalidated: list[str] = []
         earliest_invalid = self._checkpoints.earliest_invalid_phase(run_id)
@@ -633,6 +745,7 @@ class DevelopmentManager:
 
     # -- helpers ----------------------------------------------------------
 
+    @_locked
     def get_progress(self, run_id: str) -> RunProgress:
         return self._progress(self._require_run(run_id))
 

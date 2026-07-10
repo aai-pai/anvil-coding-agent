@@ -218,6 +218,17 @@ class RunState(BaseModel):
     completed_phases: list[dict[str, object]] = Field(default_factory=list)
     stale_phases: list[str] = Field(default_factory=list)
     retry_counters: dict[str, int] = Field(default_factory=dict)
+    # Orchestration metadata a resume must rehydrate: without it a resumed
+    # secure run would silently lose its mandatory gates and complexity tier.
+    pre_gates: dict[str, str] = Field(default_factory=dict)
+    post_gates: dict[str, str] = Field(default_factory=dict)
+    approved_gates: list[str] = Field(default_factory=list)
+    excluded_phases: list[str] = Field(default_factory=list)
+    clarification_round: int = 0
+    # An active pause survives a restart: a post-gate is only checked in the
+    # step that completes its phase, so an unpersisted pause would be skipped.
+    pending_gate: str | None = None
+    pending_questions: list[str] = Field(default_factory=list)
 
 
 __all__ = [

@@ -156,6 +156,28 @@ class LLMBackend:
             return self._run_intake(session_id, step, model)
         return self._run_doc(session_id, step, model)
 
+    @staticmethod
+    def _response_failure(response: "object") -> str | None:
+        """A failure reason when a completion is unusable, else None.
+
+        An empty or max_tokens-truncated response must fail the step (and enter
+        the supervisor's retry path) rather than be papered over with
+        placeholder artifacts that pass validation.
+        """
+        if not str(getattr(response, "content", "")).strip():
+            return "LLM returned an empty response"
+        if getattr(response, "finish_reason", None) == "length":
+            return "LLM response truncated at max_tokens (finish_reason=length)"
+        return None
+
+    def _failed_step(
+        self, session_id: str, step: PhaseStep, reason: str, usage: dict[str, int]
+    ) -> StepResult:
+        return StepResult(
+            session_id=session_id, phase=step.phase, status="failure",
+            failure_reason=reason, usage=usage,
+        )
+
     # -- intake phase (#15) -------------------------------------------------
 
     def _run_intake(self, session_id: str, step: PhaseStep, model: str) -> StepResult:
@@ -166,6 +188,9 @@ class LLMBackend:
             model=model, prompt=self._intake_prompt(step, mode),
             phase=step.phase, subtask=step.subtask, max_tokens=400,
         ))
+        reason = self._response_failure(response)
+        if reason:
+            return self._failed_step(session_id, step, reason, response.usage)
         questions, assumptions = self._parse_intake(response.content)
         artifacts: list[str] = []
         if mode == "assumptions":
@@ -238,6 +263,9 @@ class LLMBackend:
             model=model, prompt=self._doc_prompt(step),
             phase=step.phase, subtask=step.subtask, max_tokens=1500,
         ))
+        reason = self._response_failure(response)
+        if reason:
+            return self._failed_step(session_id, step, reason, response.usage)
         content = response.content
         tier: str | None = None
         if step.phase == "proposal":
@@ -277,6 +305,9 @@ class LLMBackend:
             model=model, prompt=self._code_prompt(step),
             phase=step.phase, subtask=step.subtask, max_tokens=4000,
         ))
+        reason = self._response_failure(response)
+        if reason:
+            return self._failed_step(session_id, step, reason, response.usage)
         files = self._parse_manifest(response.content)
         return StepResult(
             session_id=session_id, phase=step.phase, status="success",

@@ -30,6 +30,13 @@ class _FailingProposalAgent(BasePhaseAgent):
         )
 
 
+class _RaisingProposalAgent(BasePhaseAgent):
+    phase_id = "proposal"
+
+    def run(self, payload: PhaseInvocationPayload) -> PhaseCompleteEvent:
+        raise ConnectionError("provider unreachable")
+
+
 def test_yolo_run_completes_all_phases(tmp_path: pathlib.Path) -> None:
     mgr = _manager(tmp_path)
     started = mgr.start_run(RunStartRequest(mode="yolo", security_profile="open"))
@@ -99,3 +106,41 @@ def test_failing_phase_escalates_after_retry_budget(tmp_path: pathlib.Path) -> N
     assert len(escalations) == 1
     assert escalations[0].severity == "critical"
     assert escalations[0].data["attempts"] == 3  # initial + 2 retries
+
+
+def test_retries_wait_out_the_backoff(tmp_path: pathlib.Path) -> None:
+    # NFR-RB-002: the supervisor sleeps 2s then 4s between self-heal retries
+    # (via the injected sleeper) instead of re-dispatching in a tight loop.
+    factory = PhaseAgentFactory()
+    factory._classes["proposal"] = _FailingProposalAgent  # noqa: SLF001
+    slept: list[float] = []
+    mgr = DevelopmentManager(
+        workspace_root=str(tmp_path),
+        factory=factory,
+        retry_controller=RetryController(max_retries_per_phase=2),
+        retry_sleeper=slept.append,
+    )
+    started = mgr.start_run(RunStartRequest(mode="yolo", security_profile="open"))
+    mgr.run_until_pause(started.run_id)
+    assert slept == [2, 4]
+
+
+def test_agent_exception_enters_retry_and_escalation_path(tmp_path: pathlib.Path) -> None:
+    # An executor crash (LLM/network error) must behave like a reported
+    # failure: PhaseFailed events, retries, then escalation — never a raw
+    # exception that wedges the run in "running".
+    factory = PhaseAgentFactory()
+    factory._classes["proposal"] = _RaisingProposalAgent  # noqa: SLF001
+    mgr = DevelopmentManager(
+        workspace_root=str(tmp_path),
+        factory=factory,
+        retry_controller=RetryController(max_retries_per_phase=1),
+    )
+    started = mgr.start_run(RunStartRequest(mode="yolo", security_profile="open"))
+    progress = mgr.run_until_pause(started.run_id)  # must not raise
+    assert progress.status == "escalated"
+    assert progress.current_phase == "proposal"
+    events = mgr._events.read_all()  # noqa: SLF001
+    failures = [e for e in events if e.eventType == "PhaseFailed"]
+    assert len(failures) == 2  # initial + 1 retry
+    assert "ConnectionError: provider unreachable" in failures[0].data["failure_reason"]

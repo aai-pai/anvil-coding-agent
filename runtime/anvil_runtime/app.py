@@ -99,12 +99,17 @@ def _build_real_manager(
         security_profile=cfg.securityProfile,
         workspace_root=workspace_root,
     )
+    import time
+
     return DevelopmentManager(
         workspace_root=workspace_root,
         config=cfg,
         event_bus=bus,
         executor=BridgeExecutor(bridge),
         artifact_validator=ArtifactValidator(workspace_root, event_bus=bus),
+        # Real retries must wait out the backoff (rate limits); offline-llm has
+        # no provider to protect, and sleeping would only slow tests.
+        retry_sleeper=time.sleep if execution_mode == "real" else None,
     )
 
 

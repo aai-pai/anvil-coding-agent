@@ -118,6 +118,13 @@ describe("parseCommand: overrides", () => {
       reason: "trust me",
     });
   });
+
+  it("does not treat bare `advance` as a gate-bypassing override", () => {
+    expect(parseCommand("advance")).toEqual({
+      kind: "unknown",
+      input: "advance",
+    });
+  });
 });
 
 describe("parseCommand: misc", () => {

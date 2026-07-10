@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import threading
 from typing import TYPE_CHECKING, Callable, Iterator
 
 from anvil_runtime.config.schema import EVENTS_LOG_PATH
@@ -52,6 +53,9 @@ class EventBus:
         self._subscribers: list[EventCallback] = []
         # Optional Slice 6 redaction pass (NFR-OB-004); None preserves Slice 2 behavior.
         self._redactor = redactor
+        # Routes run on FastAPI's threadpool: serialize appends so concurrent
+        # emits can never interleave partial lines in the JSONL trail.
+        self._write_lock = threading.Lock()
 
     @property
     def events_path(self) -> pathlib.Path:
@@ -72,7 +76,7 @@ class EventBus:
             event = self._redactor.redact_event(event)
         self._events_path.parent.mkdir(parents=True, exist_ok=True)
         line = event.model_dump_json()
-        with self._events_path.open("a", encoding="utf-8") as handle:
+        with self._write_lock, self._events_path.open("a", encoding="utf-8") as handle:
             handle.write(line + "\n")
         # Notify subscribers; a failing subscriber must not break emission.
         for callback in list(self._subscribers):
@@ -86,8 +90,15 @@ class EventBus:
         with self._events_path.open("r", encoding="utf-8") as handle:
             for raw in handle:
                 raw = raw.strip()
-                if raw:
+                if not raw:
+                    continue
+                try:
                     events.append(EventEnvelope.model_validate_json(raw))
+                except ValueError:
+                    # One corrupt line (crash mid-append, hand-edited file) must
+                    # not break replay — especially failure handling, which
+                    # reads recent events while reporting an error.
+                    continue
         return events
 
     def stream(self, run_id: str) -> Iterator[EventEnvelope]:

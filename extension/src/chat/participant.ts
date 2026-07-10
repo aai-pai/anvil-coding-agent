@@ -172,7 +172,12 @@ export class AnvilChatParticipant {
       case "deny": {
         const runId = this.requireRun();
         const state = await this.client.getRun(runId);
-        const gate = state.pending_approval_gate ?? "";
+        const gate = state.pending_approval_gate;
+        if (!gate) {
+          // Never submit an empty-gate decision: the runtime treats an
+          // approval as "resume", so a stray `yes`/`no` must be a no-op.
+          return `No approval is pending — the run is **${state.status}**.`;
+        }
         await this.client.approve(runId, {
           gateId: gate,
           gateName: gate,

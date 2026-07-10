@@ -94,6 +94,51 @@ def test_llm_backend_writes_validated_document(tmp_path: pathlib.Path) -> None:
     assert result.valid is True
 
 
+# -- Unusable completions fail the step (never placeholder "success") -------
+
+
+class _CannedProvider:
+    """Provider stand-in returning a fixed completion."""
+
+    def __init__(self, content: str, finish_reason: str | None = None) -> None:
+        from anvil_runtime.llm.openrouter_provider import CompletionResponse
+
+        self._response = CompletionResponse(
+            model="m", content=content, usage={"total_tokens": 1},
+            finish_reason=finish_reason,
+        )
+
+    def complete(self, req: CompletionRequest):
+        return self._response
+
+
+def test_empty_llm_response_fails_doc_phase(tmp_path: pathlib.Path) -> None:
+    backend = LLMBackend(_CannedProvider(""), str(tmp_path))
+    bridge = SessionBridge(
+        adapter=OpenHandsAdapter(backend=backend), workspace_root=str(tmp_path)
+    )
+    event = bridge.execute_phase(build_invocation_payload(PHASE_CONTRACTS["proposal"]))
+    assert event.status == "failure"
+    assert "empty" in (event.failure_reason or "")
+    assert not (tmp_path / "docs" / "proposal.md").exists()  # nothing written
+
+
+def test_truncated_llm_response_fails_code_phase(tmp_path: pathlib.Path) -> None:
+    backend = LLMBackend(
+        _CannedProvider("=== FILE: src/main.py ===\nprint(", finish_reason="length"),
+        str(tmp_path),
+    )
+    bridge = SessionBridge(
+        adapter=OpenHandsAdapter(backend=backend), workspace_root=str(tmp_path)
+    )
+    event = bridge.execute_phase(
+        build_invocation_payload(PHASE_CONTRACTS["implementation"])
+    )
+    assert event.status == "failure"
+    assert "truncated" in (event.failure_reason or "")
+    assert not (tmp_path / "src" / "main.py").exists()  # partial file not written
+
+
 # -- Full supervisor run with real pipeline (offline transport) -------------
 
 

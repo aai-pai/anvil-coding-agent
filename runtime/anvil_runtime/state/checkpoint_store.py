@@ -54,13 +54,26 @@ class CheckpointStore:
     def _read_container(self) -> dict[str, object]:
         if not self._path.exists():
             return {"runStateVersion": RUN_STATE_VERSION, "runs": {}}
-        with self._path.open("r", encoding="utf-8") as handle:
-            return json.load(handle)
+        try:
+            with self._path.open("r", encoding="utf-8") as handle:
+                return json.load(handle)
+        except (json.JSONDecodeError, OSError):
+            # A corrupt/truncated file must not brick every subsequent call
+            # (FR-SV-022A rewinds anyway). Keep the bytes aside for forensics.
+            try:
+                self._path.replace(self._path.with_suffix(".json.corrupt"))
+            except OSError:
+                pass
+            return {"runStateVersion": RUN_STATE_VERSION, "runs": {}}
 
     def _write_container(self, container: dict[str, object]) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        with self._path.open("w", encoding="utf-8") as handle:
+        # Write-then-rename so a crash mid-write can never corrupt the state
+        # of every run stored in this container.
+        tmp = self._path.with_suffix(".json.tmp")
+        with tmp.open("w", encoding="utf-8") as handle:
             json.dump(container, handle, indent=2, sort_keys=True)
+        tmp.replace(self._path)
 
     def initialize_run(self, run_id: str, mode: str) -> RunState:
         """Create (or return existing) run state for a run."""
@@ -87,11 +100,22 @@ class CheckpointStore:
         container["runStateVersion"] = RUN_STATE_VERSION
         self._write_container(container)
 
+    def save_run_meta(self, run_id: str, **fields: object) -> RunState:
+        """Update orchestration metadata (gates/tier/round) on a run's state."""
+        state = self.load_run_state(run_id)
+        if state is None:
+            raise KeyError(f"No persisted run state for '{run_id}'")
+        state = state.model_copy(update=fields)
+        self._persist_state(state)
+        return state
+
     def save_phase_completion(self, run_id: str, phase: PhaseCheckpoint) -> None:
         """Append/replace a completed-phase entry and persist (FR-SV-021)."""
         state = self.load_run_state(run_id)
         if state is None:
-            state = RunState(runStateVersion=RUN_STATE_VERSION, run_id=run_id, mode="")
+            # Fabricating a state with mode="" here would mask an
+            # initialization bug and poison a later resume.
+            raise KeyError(f"Run '{run_id}' was never initialized")
         # Replace any prior entry for the same phase; keep canonical order.
         completed = [c for c in state.completed_phases if c.get("phase") != phase.phase]
         completed.append(phase.model_dump())
