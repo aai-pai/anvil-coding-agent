@@ -23,7 +23,7 @@ the chat window — it does no Anvil work, and its model dropdown does **not** c
 Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 
 # 1. Install the Python runtime + dependencies
-cd C:\Users\pcuser\openhands_based_coding_team
+cd C:\path\to\openhands_based_coding_team
 pip install -e runtime
 
 # 2. Build the VS Code extension (only needed for the @anvil chat flow)
@@ -60,7 +60,7 @@ Selected by `ANVIL_EXECUTION_MODE` (or the launcher's `-Mode`):
 ### Step 1 — Start the server (leave the window open)
 
 ```powershell
-cd C:\Users\pcuser\openhands_based_coding_team
+cd C:\path\to\openhands_based_coding_team
 $env:OPENROUTER_API_KEY = "sk-or-..."     # your key
 .\scripts\start-anvil.ps1                  # real mode, phase-aware routing
 ```
@@ -134,6 +134,17 @@ Invoke-RestMethod -Method Post "$BASE/v1/runs/$($run.run_id)/approve" `
 ```
 
 (Equivalent `curl` works too; SSE event stream: `GET /v1/runs/<id>/events`.)
+
+**After a server restart**, restore a run from its checkpoint (gates, complexity
+tier, and any active pause are rehydrated):
+
+```powershell
+Invoke-RestMethod -Method Post "$BASE/v1/runs/$($run.run_id)/resume"
+```
+
+The server checks its own root, then scans `runs/*` for the run id; pass
+`?workspace=<path>` for a run rooted elsewhere, and `?defer=true` to restore
+without advancing.
 
 ---
 
@@ -230,7 +241,7 @@ directly.
 The generated project is plain source under the run's `src/`:
 
 ```powershell
-cd C:\Users\pcuser\openhands_based_coding_team\workspace\runs\<date>-<slug>\src
+cd C:\path\to\openhands_based_coding_team\workspace\runs\<date>-<slug>\src
 python <entrypoint>.py <args>
 ```
 

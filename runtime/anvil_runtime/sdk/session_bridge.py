@@ -48,6 +48,18 @@ class SessionBridge:
         if isinstance(payload.phase_context, dict):
             run_id = str(payload.phase_context.get("run_id", "") or "")
         decision = self._router.select(phase, subtask, run_id=run_id)
+        if not decision.allowed:
+            # FR-ML-004: a policy denial without a remediation replacement must
+            # fail the phase — proceeding would call the forbidden model.
+            return PhaseCompleteEvent(
+                phase_name=phase,
+                status="failure",
+                duration_ms=0,
+                failure_reason=(
+                    f"model '{decision.model}' denied by policy: "
+                    f"{decision.justification}"
+                ),
+            )
         cfg = AgentRuntimeConfig(
             model=decision.model,
             security_profile=self._profile,

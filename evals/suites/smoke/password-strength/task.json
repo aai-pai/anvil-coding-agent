@@ -1,0 +1,6 @@
+{
+  "id": "password-strength",
+  "title": "Password strength checker library",
+  "expected_complexity": ["simple", "standard"],
+  "tags": ["python", "library", "standard"]
+}

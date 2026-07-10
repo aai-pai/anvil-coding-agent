@@ -1,0 +1,40 @@
+name: test
+
+on:
+  push:
+    branches: [main, "v*"]
+  pull_request:
+
+jobs:
+  runtime:
+    name: runtime (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install runtime + dev dependencies
+        run: pip install -e "runtime[dev]"
+      - name: Run test suite
+        run: pytest -q
+
+  extension:
+    name: extension (vitest + tsc)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: extension
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Type-check and build
+        run: npm run build
+      - name: Run unit tests
+        run: npm test

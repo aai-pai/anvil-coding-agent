@@ -26,6 +26,7 @@ from anvil_runtime.api import (
 )
 from anvil_runtime.config.schema import EffectiveConfig
 from anvil_runtime.core.development_manager import DevelopmentManager
+from anvil_runtime.security.redaction import Redactor
 from anvil_runtime.security.secret_adapter import SecretAdapter
 from anvil_runtime.state.event_bus import EventBus
 
@@ -39,6 +40,21 @@ API_VERSION = "0.1.0"
 #   "real"        - real OpenRouter LLM execution (requires OPENROUTER_API_KEY).
 EXECUTION_MODE_ENV = "ANVIL_EXECUTION_MODE"
 DEFAULT_EXECUTION_MODE = "stub"
+VALID_EXECUTION_MODES = ("stub", "offline-llm", "real")
+
+
+def _load_effective_config(workspace_root: str) -> EffectiveConfig:
+    """Resolve the four-level config precedence for a workspace (FR-CF-001..007).
+
+    builtin defaults < ~/.anvil/config.yaml < <workspace>/.anvil/config.yaml.
+    Raises loudly on malformed or inconsistent configuration.
+    """
+    from anvil_runtime.config.loader import ConfigLoader
+    from anvil_runtime.config.merger import ConfigMerger
+    from anvil_runtime.config.validator import ConfigValidator
+
+    sources = ConfigLoader(workspace_root).load_sources()
+    return ConfigValidator().validate(ConfigMerger().merge(sources))
 
 
 def _build_real_manager(
@@ -59,10 +75,12 @@ def _build_real_manager(
         OpenRouterProvider,
     )
     from anvil_runtime.llm.usage_tracker import UsageTracker
+    from anvil_runtime.policy.engine import PolicyEngine
+    from anvil_runtime.policy.models import PolicyDocument, PolicyRule
     from anvil_runtime.sdk.openhands_adapter import LLMBackend, OpenHandsAdapter
     from anvil_runtime.sdk.session_bridge import SessionBridge
 
-    cfg = config or EffectiveConfig()
+    cfg = config or _load_effective_config(workspace_root)
     if execution_mode == "real":
         transport = HttpxTransport()
         secrets = secret_adapter  # resolves the real OPENROUTER_API_KEY
@@ -92,9 +110,25 @@ def _build_real_manager(
         provider, workspace_root, input_char_limit=input_char_limit, event_bus=bus,
         instructions=instructions,
     )
+    # FR-ML-004: a configured allowedModels list becomes an enforced whitelist
+    # (with switch-to-allowed remediation); an empty list means unrestricted.
+    policy_engine = None
+    if cfg.allowedModels:
+        policy_engine = PolicyEngine(
+            PolicyDocument(policies=[PolicyRule(
+                name="AllowedModels", type="whitelist", target="model-selection",
+                values=list(cfg.allowedModels), remediable=True,
+                remediationStrategy="switch-to-allowed-model",
+            )]),
+            event_bus=bus,
+        )
     bridge = SessionBridge(
         adapter=OpenHandsAdapter(backend=backend),
-        model_router=ModelRouter(subtask_models=overrides or None, event_bus=bus),
+        model_router=ModelRouter(
+            subtask_models=overrides or None,
+            policy_engine=policy_engine,
+            event_bus=bus,
+        ),
         usage_tracker=UsageTracker(budgets=cfg.tokenBudgetPerPhase, event_bus=bus),
         security_profile=cfg.securityProfile,
         workspace_root=workspace_root,
@@ -130,7 +164,8 @@ def build_manager(
     instructions: str | None = None,
 ) -> tuple[DevelopmentManager, EventBus]:
     """Build a manager + its event bus rooted at ``workspace_root`` for a mode."""
-    bus = EventBus(workspace_root)
+    # NFR-OB-004: every production bus redacts before events reach disk or SSE.
+    bus = EventBus(workspace_root, redactor=Redactor())
     if execution_mode == "stub":
         manager = DevelopmentManager(workspace_root=workspace_root, config=config, event_bus=bus)
     else:
@@ -156,9 +191,19 @@ def create_app(
     """
     app = FastAPI(title=API_TITLE, version=API_VERSION)
 
-    bus = event_bus or EventBus(workspace_root)
+    bus = event_bus or EventBus(workspace_root, redactor=Redactor())
     secrets = secret_adapter or SecretAdapter()
     mode = (execution_mode or os.environ.get(EXECUTION_MODE_ENV) or DEFAULT_EXECUTION_MODE)
+    if mode not in VALID_EXECUTION_MODES:
+        # A typo ("Real", "offline") must fail loudly, not silently degrade to
+        # a stub that reports placeholder artifacts as success.
+        raise ValueError(
+            f"Unknown execution mode '{mode}' "
+            f"(expected one of: {', '.join(VALID_EXECUTION_MODES)})"
+        )
+    # FR-CF-001..007: resolve the file-based config levels unless the caller
+    # supplied an explicit EffectiveConfig.
+    config = config or _load_effective_config(workspace_root)
 
     if manager is not None:
         mgr = manager

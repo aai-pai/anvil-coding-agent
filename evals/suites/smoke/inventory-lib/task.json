@@ -1,0 +1,6 @@
+{
+  "id": "inventory-lib",
+  "title": "Inventory management library with persistence",
+  "expected_complexity": ["standard", "complex"],
+  "tags": ["python", "library", "persistence", "standard"]
+}

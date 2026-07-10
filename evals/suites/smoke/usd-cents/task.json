@@ -1,0 +1,6 @@
+{
+  "id": "usd-cents",
+  "title": "USD to cents conversion helper",
+  "expected_complexity": ["simple"],
+  "tags": ["python", "library", "simple"]
+}

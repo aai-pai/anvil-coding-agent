@@ -1,0 +1,6 @@
+{
+  "id": "celsius-cli",
+  "title": "Celsius to Fahrenheit converter (library + CLI)",
+  "expected_complexity": ["simple"],
+  "tags": ["python", "cli", "simple"]
+}

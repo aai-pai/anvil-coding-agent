@@ -1,0 +1,5 @@
+{
+  "_comment": "Blended USD per 1M tokens per OpenRouter model slug. Copy to pricing.json, update from https://openrouter.ai/models, and pass with --pricing.",
+  "google/gemma-4-31b-it": 0.10,
+  "deepseek/deepseek-v4-flash": 0.14
+}

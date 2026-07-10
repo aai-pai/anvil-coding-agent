@@ -2,9 +2,15 @@
 /temp/
 
 # Generated Anvil run workspaces (each run is self-contained & disposable)
-# /runs/*
+/runs/*
 !/runs/README.md
 /workspace/runs/
+
+# Runtime-generated state and audit logs (per-run copies live under runs/)
+/logs/
+/.anvil/
+*.json.corrupt
+*.json.tmp
 
 # Python
 __pycache__/
@@ -22,3 +28,5 @@ node_modules/
 extension/dist/
 *.tsbuildinfo
 
+# Built extension packages (rebuild with `vsce package`; do not commit)
+*.vsix
