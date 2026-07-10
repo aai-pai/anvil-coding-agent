@@ -50,9 +50,44 @@ blended $/1M-token rates from openrouter.ai/models, and pass `--pricing`.
 | Complexity match | `ComplexityAssessed` event | assessed tier vs the task's `expected_complexity` (soft check; unassessed runs are excluded, not counted as mismatches) |
 | Reliability | events + `docs/failure_records/` | escalations, artifact validation failures, input truncations, failure records |
 
-A task is **resolved** only if the run reached `completed` *and* all of its
-held-out tests pass — the qa phase grading its own generated tests never
-counts.
+## Scoring logic
+
+The verdict chain, per task (code: [`runner.py`](anvil_eval/runner.py) →
+[`scoring.py`](anvil_eval/scoring.py) → [`report.py`](anvil_eval/report.py)):
+
+1. **Run the task** — the prompt is submitted as a `yolo` run and driven
+   phase-by-phase until it reaches a terminal status (`completed`,
+   `escalated`, `stopped`) or the per-task timeout (`runner.py`).
+2. **Execute the held-out tests** — `scoring.run_held_out_tests()` copies the
+   task's `held_out_tests/` into a sandbox, puts the generated `src/` on
+   `sys.path`, exports `ANVIL_GENERATED_SRC`/`ANVIL_RUN_DIR`, and runs pytest.
+   Pass = exit code 0, at least one test collected, zero failures/errors.
+3. **Resolved** = run status `completed` **AND** step 2 passed. This is the
+   only input to the headline resolve rate — the qa phase grading its own
+   generated tests never counts, and a run that "finished" but produced
+   broken code scores as unresolved.
+4. **Secondary metrics** are mined independently: `analyze_events()` reads
+   the run's `logs/events.jsonl` (tokens per phase, model routing, timings,
+   complexity tier, escalations/truncations); `check_artifacts()` inspects
+   the generated `docs/` (OKF frontmatter, lineage fields, `index.md`,
+   failure records). `report.aggregate()` rolls everything up into the
+   suite-level summary in `results.json` / `report.md`.
+
+## The smoke suite (6 tasks)
+
+| Task | Expected complexity | Contract (what the prompt pins) | Held-out pass criteria |
+|---|---|---|---|
+| `celsius-cli` | simple | `src/convert.py` with `celsius_to_fahrenheit(c)`; CLI prints the value | 3 tests: correct conversions (0→32, 100→212, −40→−40, 37→98.6); `ValueError` below −273.15; `python convert.py 100` prints `212.0` |
+| `usd-cents` | simple | `src/currency.py` with `usd_to_cents()` / `cents_to_usd()`, Decimal-based | 4 tests: basic conversions; half-up rounding immune to float artifacts (1.005→101, 2.675→268); negative raises `ValueError`; `cents_to_usd(101) == "$1.01"` |
+| `slugify` | simple | `src/slugger.py` with `slugify(text, max_length=None)`, exact slug rules | 4 tests: canonical slugs; collapses/strips hyphen runs; empty-string cases; `max_length` truncates without a trailing hyphen |
+| `password-strength` | simple or standard | `src/password_strength.py` with `assess(pw) -> {"score", "issues"}`, 4 pinned rules | 5 tests: score 4 with empty issues; score 0 with 4 issues; exact partial scores; invariant `score + len(issues) == 4`; `TypeError` on non-string |
+| `todo-cli` | standard or complex | `src/todo.py` CLI (`add`/`list`/`done`), `TODO_DB_PATH` env var, pinned JSON storage schema `{"id", "title", "done"}` | 5 tests (drive the CLI as a subprocess, assert on the JSON file): add writes the exact schema; ids increment; `list` shows titles; `done` flips the flag; unknown id → non-zero exit + stderr |
+| `inventory-lib` | standard or complex | `src/inventory.py` `Inventory` class: add/remove with validation, `get_quantity`, `total_value`, `save`/`load` | 7 tests: add+query; re-add accumulates qty and updates price; add validation (`ValueError`); remove + depletion deletes the item; remove validation; `total_value` arithmetic; JSON save/load round-trip preserves state |
+
+Expected complexity is a *soft* check against the proposal phase's
+`ComplexityAssessed` tier — it feeds the complexity-match metric but never
+gates resolution. Full contracts live in each task's `prompt.md`; the exact
+assertions in its `held_out_tests/`.
 
 ## Suite layout / adding tasks
 
@@ -84,8 +119,8 @@ Task-authoring rules:
 5. `expected_complexity` lists the tiers you'd accept from the proposal
    phase's assessment; it's scored but never gates resolution.
 
-The starter `smoke` suite has 6 tasks (3 simple, 3 standard-ish). Grow this
-toward 20-50 tasks across tiers for stable release-over-release numbers.
+Grow the suite toward 20-50 tasks across tiers for stable
+release-over-release numbers.
 
 ## Interpretation notes
 
