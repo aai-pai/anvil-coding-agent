@@ -1,0 +1,190 @@
+"""Commit0 adapter CLI.
+
+Usage (from the repo root)::
+
+    python benchmarks/commit0/run_commit0.py list
+    python benchmarks/commit0/run_commit0.py run --repo tinydb --start-server --mode real
+    python benchmarks/commit0/run_commit0.py run --repo tinydb --repo simpy --base-url http://127.0.0.1:8765
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import pathlib
+import sys
+import time
+from datetime import datetime, timezone
+
+from anvil_eval.client import AnvilClient, AnvilClientError
+from anvil_eval.config import EvalConfig
+from anvil_eval.runner import _drive_run
+from anvil_eval.scoring import analyze_events
+from anvil_eval.server import AnvilServer
+
+from commit0_adapter.apply import apply_generated
+from commit0_adapter.prepare import stage_workspace
+from commit0_adapter.repos import STARTER_REPOS, fetch_skeleton
+from commit0_adapter.score import run_repo_tests
+
+BENCH_ROOT = pathlib.Path(__file__).resolve().parent.parent
+RESULTS_ROOT = BENCH_ROOT / "results"
+SKELETONS_ROOT = BENCH_ROOT / "skeletons"
+
+
+def run_one(client: AnvilClient, repo: str, results_dir: pathlib.Path,
+            cfg: EvalConfig, test_timeout_s: float, baseline: bool,
+            log=print) -> dict:
+    result: dict = {"repo": repo, "run_status": "not_started"}
+    wall_start = time.monotonic()
+    try:
+        skeleton = fetch_skeleton(repo, SKELETONS_ROOT)
+        stage_dir = results_dir / "repos" / repo
+        info = stage_workspace(repo, skeleton, stage_dir)
+        result.update(info)
+        result["stage_dir"] = str(stage_dir)
+        log(f"    staged: {info['stubs']} stubs across {info['modules']} modules")
+
+        if baseline:
+            base = run_repo_tests(stage_dir, timeout_s=test_timeout_s,
+                                  junit_name="baseline-junit.xml")
+            result["baseline"] = {k: base[k] for k in
+                                  ("total", "passed_count", "pass_rate")}
+            log(f"    skeleton baseline: {base['passed_count']}/{base['total']}")
+
+        started = client.start_run_in_place(
+            workspace=str(stage_dir), mode=cfg.run_mode,
+            security_profile=cfg.security_profile, defer=True)
+        run_id = started["run_id"]
+        result["run_id"] = run_id
+        log(f"    run {run_id[:12]} started")
+        status, state = _drive_run(client, run_id, cfg.task_timeout_s, log)
+        result["run_status"] = status
+        result["completed_phases"] = state.get("completed_phases", [])
+
+        events = analyze_events(stage_dir)
+        result["tokens"] = events.get("total_tokens", 0)
+        result["events"] = {k: events[k] for k in
+                            ("complexity_tier", "escalations",
+                             "artifact_validation_failures", "input_truncations")}
+
+        merged = apply_generated(stage_dir, pathlib.Path(info["package_dir"]))
+        result["apply"] = {k: merged[k] for k in
+                           ("generated_py_files", "applied", "unmatched",
+                            "skipped_invalid")}
+        (results_dir / "repos" / f"{repo}-apply.json").write_text(
+            json.dumps(merged, indent=2), encoding="utf-8")
+        log(f"    applied {merged['applied']}/{merged['generated_py_files']} "
+            f"generated modules")
+
+        tests = run_repo_tests(stage_dir, timeout_s=test_timeout_s)
+        result["tests"] = {k: tests.get(k) for k in
+                           ("total", "passed_count", "failures", "errors",
+                            "skipped", "pass_rate", "exit_code",
+                            "collection_error")}
+        if tests.get("collection_error"):
+            log("    NOTE: package failed to import - tests never collected")
+        result["output_tail"] = tests.get("output_tail", "")
+        log(f"    tests: {tests.get('passed_count', 0)}/{tests.get('total', 0)} "
+            f"passed (pass rate {tests.get('pass_rate', 0):.1%})")
+    except (AnvilClientError, Exception) as exc:  # noqa: BLE001 - always record
+        result["error"] = f"{type(exc).__name__}: {exc}"
+        log(f"    ERROR: {result['error']}")
+    result["wall_clock_s"] = round(time.monotonic() - wall_start, 2)
+    return result
+
+
+def write_report(results_dir: pathlib.Path, meta: dict, results: list[dict]) -> None:
+    payload = {"meta": meta, "results": results}
+    (results_dir / "results.json").write_text(json.dumps(payload, indent=2),
+                                              encoding="utf-8")
+    lines = [f"# Commit0 adapter report — {meta['label'] or meta['started_at']}",
+             "",
+             "| Repo | Run | Stubs | Applied | Tests passed | Pass rate |",
+             "|---|---|---|---|---|---|"]
+    for r in results:
+        tests = r.get("tests", {})
+        rate = ("import-fail" if tests.get("collection_error")
+                else f"{tests.get('pass_rate', 0.0):.1%}")
+        lines.append(
+            f"| {r['repo']} | {r.get('run_status', '-')} | {r.get('stubs', '-')} "
+            f"| {r.get('apply', {}).get('applied', '-')}"
+            f"/{r.get('apply', {}).get('generated_py_files', '-')} "
+            f"| {tests.get('passed_count', 0)}/{tests.get('total', 0)} "
+            f"| {rate} |")
+    lines += ["", "Local dev-loop scores; use the official `commit0` evaluator "
+                  "for leaderboard numbers."]
+    (results_dir / "report.md").write_text("\n".join(lines) + "\n",
+                                           encoding="utf-8")
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="commit0-adapter")
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("list", help="show the starter repo subset")
+    run = sub.add_parser("run", help="run Anvil on Commit0 repos and score")
+    run.add_argument("--repo", action="append", dest="repos", default=None,
+                     help="repo name under github.com/commit-0 (repeatable; "
+                          "default: tinydb)")
+    run.add_argument("--base-url", default=None)
+    run.add_argument("--start-server", action="store_true")
+    run.add_argument("--mode", default="offline-llm",
+                     choices=["real", "offline-llm", "stub"])
+    run.add_argument("--label", default=None)
+    run.add_argument("--timeout", type=float, default=1800.0,
+                     help="per-repo Anvil wall-clock timeout (default 1800s)")
+    run.add_argument("--test-timeout", type=float, default=600.0)
+    run.add_argument("--baseline", action="store_true",
+                     help="also score the untouched skeleton for a delta")
+    args = parser.parse_args(argv)
+
+    if args.command == "list":
+        print("starter repos (not the official split):")
+        for repo in STARTER_REPOS:
+            print(f"  {repo}")
+        return 0
+
+    repos = args.repos or ["tinydb"]
+    if args.mode == "real" and args.start_server \
+            and not os.environ.get("OPENROUTER_API_KEY"):
+        print("error: --mode real needs OPENROUTER_API_KEY", file=sys.stderr)
+        return 2
+
+    cfg = EvalConfig(run_mode="yolo", task_timeout_s=args.timeout)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    results_dir = RESULTS_ROOT / (f"{stamp}-{args.label}" if args.label else stamp)
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    server = None
+    try:
+        if args.start_server:
+            server = AnvilServer(args.mode, results_dir / "server-workspace")
+            print(f"starting Anvil server ({args.mode}) on {server.base_url} ...")
+            server.start()
+            cfg.base_url = server.base_url
+        else:
+            cfg.base_url = args.base_url or cfg.base_url
+        client = AnvilClient(cfg.base_url, timeout_s=cfg.advance_timeout_s)
+        client.health()
+
+        meta = {"benchmark": "commit0", "label": args.label,
+                "started_at": datetime.now(timezone.utc).isoformat(),
+                "execution_mode": args.mode if args.start_server else "external",
+                "repos": repos}
+        results = []
+        for index, repo in enumerate(repos, start=1):
+            print(f"[{index}/{len(repos)}] {repo}")
+            results.append(run_one(client, repo, results_dir, cfg,
+                                   args.test_timeout, args.baseline))
+        write_report(results_dir, meta, results)
+        print(f"\nresults: {results_dir / 'results.json'}")
+        print(f"report:  {results_dir / 'report.md'}")
+        return 0
+    finally:
+        if server is not None:
+            server.stop()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

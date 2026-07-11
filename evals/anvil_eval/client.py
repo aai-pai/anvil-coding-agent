@@ -65,6 +65,24 @@ class AnvilClient:
             },
         )
 
+    def start_run_in_place(self, *, workspace: str, mode: str,
+                           security_profile: str, defer: bool = True) -> dict:
+        """``POST /v1/runs`` task-less "start" flow: run in a prepared workspace.
+
+        The workspace must already contain
+        ``domain-knowledge/background-information.md``; the run executes in
+        place (no isolated ``runs/`` subfolder). Used by benchmark adapters
+        that stage a repo skeleton for Anvil to work inside.
+        """
+        return self._request(
+            "POST", f"/v1/runs?defer={'true' if defer else 'false'}",
+            body={
+                "mode": mode,
+                "security_profile": security_profile,
+                "workspace": workspace,
+            },
+        )
+
     def advance(self, run_id: str) -> dict:
         """``POST /v1/runs/{id}/advance`` — run exactly one phase."""
         return self._request("POST", f"/v1/runs/{run_id}/advance")
