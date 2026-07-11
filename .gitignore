@@ -30,3 +30,6 @@ extension/dist/
 
 # Built extension packages (rebuild with `vsce package`; do not commit)
 *.vsix
+
+# PPT
+*.pptx
