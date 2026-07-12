@@ -79,6 +79,51 @@ def scan_module(path: pathlib.Path, module: str) -> list[StubEntry]:
     return entries
 
 
+def referenced_undefined(source: str) -> list[str]:
+    """Names a module loads but never defines, imports, or binds.
+
+    Commit0's stub-stripper sometimes deletes a helper *definition* while a
+    reference to it survives (observed: tinydb's ``FrozenDict`` keeps
+    ``__setitem__ = _immutable`` with ``def _immutable`` gone). Such names
+    can't appear in the stub inventory — this pyflakes-lite pass finds them
+    so the task can demand their definition explicitly.
+    """
+    import builtins
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+    defined = set(dir(builtins)) | {"__name__", "__file__", "__doc__"}
+    loaded: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            (loaded if isinstance(node.ctx, ast.Load) else defined).add(node.id)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            defined.add(node.name)
+        elif isinstance(node, ast.arg):
+            defined.add(node.arg)
+        elif isinstance(node, ast.alias):
+            defined.add((node.asname or node.name).split(".")[0])
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            defined.add(node.name)
+        elif isinstance(node, ast.Global) or isinstance(node, ast.Nonlocal):
+            defined.update(node.names)
+    return sorted(loaded - defined)
+
+
+def scan_package_missing(package_dir: pathlib.Path) -> dict[str, list[str]]:
+    """Per-module referenced-but-undefined names across the package."""
+    missing: dict[str, list[str]] = {}
+    for path in sorted(package_dir.rglob("*.py")):
+        module = path.relative_to(package_dir).as_posix()
+        names = referenced_undefined(
+            path.read_text(encoding="utf-8", errors="replace"))
+        if names:
+            missing[module] = names
+    return missing
+
+
 def scan_package(package_dir: pathlib.Path) -> list[StubEntry]:
     """Inventory every .py module in the package, package-relative."""
     entries: list[StubEntry] = []
@@ -88,15 +133,21 @@ def scan_package(package_dir: pathlib.Path) -> list[StubEntry]:
     return entries
 
 
-def render_inventory(entries: list[StubEntry], char_budget: int = 14000) -> str:
+def render_inventory(entries: list[StubEntry], char_budget: int = 14000,
+                     missing_by_module: dict[str, list[str]] | None = None) -> str:
     """Markdown stub inventory grouped by module, trimmed to a char budget.
 
     Stubs are listed with signatures (+ docstring first line while budget
     allows); already-implemented helpers are only counted, not listed.
+    ``missing_by_module`` adds a per-module "must also define" line for
+    definitions the skeleton references but no longer contains.
     """
+    missing_by_module = missing_by_module or {}
     by_module: dict[str, list[StubEntry]] = {}
     for entry in entries:
         by_module.setdefault(entry.module, []).append(entry)
+    for module in missing_by_module:
+        by_module.setdefault(module, [])
     lines: list[str] = []
     used = 0
 
@@ -111,12 +162,16 @@ def render_inventory(entries: list[StubEntry], char_budget: int = 14000) -> str:
     for module, module_entries in by_module.items():
         stubs = [e for e in module_entries if e.is_stub]
         done = len(module_entries) - len(stubs)
-        if not stubs:
+        missing = missing_by_module.get(module, [])
+        if not stubs and not missing:
             continue
         if not emit(f"### `{module}` — {len(stubs)} to implement"
                     f" ({done} already provided)"):
             lines.append("... (inventory truncated to fit the input budget)")
             break
+        if missing:
+            emit(f"- MUST ALSO DEFINE (referenced by this module but the "
+                 f"definition is missing): {', '.join(f'`{m}`' for m in missing)}")
         for entry in stubs:
             doc = f"  — {entry.doc_first_line}" if entry.doc_first_line else ""
             if not emit(f"- `{entry.qualname}`: `{entry.signature}`{doc}"):

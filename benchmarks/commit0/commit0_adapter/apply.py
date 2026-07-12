@@ -1,17 +1,19 @@
 """Merge Anvil's generated ``src/`` output onto the skeleton package.
 
-v1 policy (deliberately simple, and the source of the adapter's honesty):
-a generated file replaces a package module only when it maps to one
-unambiguously and parses as Python. Anything unmatched is reported, not
-guessed — a low applied-count is a real Anvil finding (it means the run
-did not honor the output contract), not something to paper over here.
+v2 policy: a generated file must still map to exactly one package module
+(exact relative path, else unique basename) — unmatched output is reported,
+not guessed. But instead of replacing the whole module (which discarded
+skeleton-provided aliases/classes and broke imports), the matched pair is
+**grafted**: only the skeleton's stub function bodies are filled from the
+generated module; every provided line stays (see ``graft.py``).
 """
 
 from __future__ import annotations
 
 import ast
 import pathlib
-import shutil
+
+from commit0_adapter.graft import graft_module
 
 
 def _is_valid_python(path: pathlib.Path) -> bool:
@@ -38,6 +40,7 @@ def apply_generated(stage_dir: pathlib.Path, package_dir: pathlib.Path) -> dict:
     for module in package_modules:
         by_basename.setdefault(module.name, []).append(module)
 
+    grafted_bodies = 0
     for gen in generated:
         rel = gen.relative_to(src_dir)
         record = {"generated": rel.as_posix(), "target": None, "action": "unmatched"}
@@ -47,10 +50,14 @@ def apply_generated(stage_dir: pathlib.Path, package_dir: pathlib.Path) -> dict:
             target = candidates[0] if len(candidates) == 1 else None
         if target is not None:
             if _is_valid_python(gen):
-                shutil.copyfile(gen, target)
+                merged, stats = graft_module(
+                    target.read_text(encoding="utf-8", errors="replace"),
+                    gen.read_text(encoding="utf-8", errors="replace"))
+                target.write_text(merged, encoding="utf-8")
                 applied += 1
+                grafted_bodies += stats["grafted"]
                 record.update(target=target.relative_to(stage_dir).as_posix(),
-                              action="applied")
+                              action="grafted", graft=stats)
             else:
                 record["action"] = "skipped_invalid_python"
         decisions.append(record)
@@ -58,6 +65,7 @@ def apply_generated(stage_dir: pathlib.Path, package_dir: pathlib.Path) -> dict:
     return {
         "generated_py_files": len(generated),
         "applied": applied,
+        "grafted_bodies": grafted_bodies,
         "unmatched": sum(1 for d in decisions if d["action"] == "unmatched"),
         "skipped_invalid": sum(1 for d in decisions
                                if d["action"] == "skipped_invalid_python"),

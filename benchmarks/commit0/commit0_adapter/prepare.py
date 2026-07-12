@@ -13,7 +13,11 @@ import pathlib
 import shutil
 
 from commit0_adapter.repos import find_package_dir
-from commit0_adapter.stubs import render_inventory, scan_package
+from commit0_adapter.stubs import (
+    render_inventory,
+    scan_package,
+    scan_package_missing,
+)
 
 INSTRUCTIONS = """\
 # Anvil standing instructions
@@ -67,6 +71,56 @@ docstrings must match the skeleton exactly.
 {inventory}
 """
 
+# Behavioral documentation first; project-process files never (they spend
+# input budget without describing library behavior).
+DOC_PRIORITY = ("usage", "getting-started", "getting_started", "quickstart",
+                "tutorial", "intro", "index", "api", "extend", "advanced")
+DOC_SKIP = {"changelog", "changes", "contribute", "contributing", "conf",
+            "authors", "license", "history", "upgrade", "deprecation",
+            "release", "news", "make", "makefile"}
+
+
+def _doc_rank(stem: str) -> int:
+    stem = stem.lower()
+    for rank, token in enumerate(DOC_PRIORITY):
+        if stem.startswith(token):
+            return rank
+    return len(DOC_PRIORITY)
+
+
+def _docs_excerpt(repo_dir: pathlib.Path, char_budget: int = 25000,
+                  per_file_cap: int = 8000) -> str:
+    """Plain-text spec excerpts from the repo's Sphinx/markdown docs.
+
+    Commit0 repos ship their specification as ``docs/*.rst`` (and a rendered
+    ``spec.pdf.bz2`` this adapter deliberately ignores — same content, and
+    Anvil only ingests text). Files are included in behavioral-relevance
+    order until the budget runs out.
+    """
+    docs_dir = next((repo_dir / name for name in ("docs", "doc")
+                     if (repo_dir / name).is_dir()), None)
+    if docs_dir is None:
+        return ""
+    candidates = [p for suffix in ("*.rst", "*.md", "*.txt")
+                  for p in docs_dir.glob(suffix)
+                  if p.stem.lower() not in DOC_SKIP]
+    candidates.sort(key=lambda p: (_doc_rank(p.stem), p.name))
+    sections: list[str] = []
+    used = 0
+    skipped: list[str] = []
+    for path in candidates:
+        text = path.read_text(encoding="utf-8", errors="replace").strip()
+        text = text[:per_file_cap] + ("\n..." if len(text) > per_file_cap else "")
+        block = f"### From `docs/{path.name}`\n\n{text}"
+        if used + len(block) > char_budget:
+            skipped.append(path.name)
+            continue
+        sections.append(block)
+        used += len(block)
+    if skipped:
+        sections.append(f"(further docs omitted for space: {', '.join(skipped)})")
+    return "\n\n".join(sections)
+
 
 def _readme_excerpt(repo_dir: pathlib.Path, limit: int = 1500) -> str:
     for name in ("README.md", "README.rst", "README.txt", "README"):
@@ -87,15 +141,22 @@ def stage_workspace(repo: str, skeleton_dir: pathlib.Path,
     package_dir = find_package_dir(stage_dir)
     entries = scan_package(package_dir)
     stub_count = sum(1 for e in entries if e.is_stub)
-    inventory = render_inventory(entries)
+    missing = scan_package_missing(package_dir)
+    inventory = render_inventory(entries, missing_by_module=missing)
+
+    task = TASK_TEMPLATE.format(repo=repo,
+                                readme_excerpt=_readme_excerpt(stage_dir),
+                                inventory=inventory)
+    # Docs go AFTER the stub inventory: if a server's ANVIL_INPUT_CHAR_LIMIT
+    # is lower than this file, truncation cuts the tail — losing doc excerpts
+    # is survivable, losing the pinned contract is not.
+    docs = _docs_excerpt(stage_dir)
+    if docs:
+        task += f"\n## Library documentation (excerpts)\n\n{docs}\n"
 
     dk_dir = stage_dir / "domain-knowledge"
     dk_dir.mkdir(exist_ok=True)
-    (dk_dir / "background-information.md").write_text(
-        TASK_TEMPLATE.format(repo=repo,
-                             readme_excerpt=_readme_excerpt(stage_dir),
-                             inventory=inventory),
-        encoding="utf-8")
+    (dk_dir / "background-information.md").write_text(task, encoding="utf-8")
     (dk_dir / "anvil-instructions.md").write_text(INSTRUCTIONS, encoding="utf-8")
     return {
         "package_dir": str(package_dir),
@@ -103,6 +164,8 @@ def stage_workspace(repo: str, skeleton_dir: pathlib.Path,
         "modules": len({e.module for e in entries}),
         "functions": len(entries),
         "stubs": stub_count,
+        "task_chars": len(task),
+        "doc_chars": len(docs),
     }
 
 

@@ -34,15 +34,34 @@ the merged package, junit XML) for debugging.
 2. **prepare** — stage a disposable copy and generate:
    - `domain-knowledge/background-information.md` — the task, with an
      AST-extracted **stub inventory** (every unimplemented function's module
-     path, signature, docstring line) as the pinned contract;
+     path, signature, docstring line) as the pinned contract, followed by
+     **spec excerpts from `docs/*.rst`** (~25k chars, behavioral files first:
+     usage/getting-started/api; changelogs and process docs skipped). The
+     repos also ship the same spec as `spec.pdf.bz2` — Anvil only ingests
+     text, so the adapter uses the `.rst` sources instead. Inventory comes
+     *before* docs so a low input cap truncates spec prose, never the
+     contract. The inventory also lists **dangling references** ("MUST ALSO
+     DEFINE") — names the skeleton uses whose definitions the Commit0
+     stripper deleted outright (e.g. tinydb's `_immutable`), which no stub
+     scan can see;
    - `domain-knowledge/anvil-instructions.md` — fill-the-skeleton fidelity
      rules (the mechanism that took the smoke suite 50% → 100%).
+
+   `--start-server` raises `ANVIL_INPUT_CHAR_LIMIT` to 80000 for the spawned
+   server (the default 20k would truncate the task file). With `--base-url`,
+   set that env var on your own server before starting it.
 3. **run** — task-less in-place Anvil run (`POST /v1/runs` with `workspace`
    only), driven phase-by-phase in yolo mode.
-4. **apply** — merge Anvil's generated `src/*.py` onto the package: exact
-   relative path first, else unique basename; files that don't parse as
-   Python are skipped. Unmatched output is *reported, not guessed* — a low
-   applied-count is a real finding about contract adherence.
+4. **apply** — merge Anvil's generated `src/*.py` onto the package by
+   **AST grafting** (`graft.py`): the skeleton file stays as shipped and only
+   its stub function bodies are filled from the same-qualname generated
+   function; generated methods missing from a skeleton class are inserted,
+   and missing imports are added. (Whole-file replacement — the v1 policy —
+   discarded skeleton-provided aliases/classes like tinydb's `QueryLike` and
+   `FrozenDict` and broke imports even when the implementations were fine.)
+   Matching is exact relative path, else unique basename; unmatched output
+   is *reported, not guessed*. The graded content — every grafted body —
+   remains 100% model-generated.
 5. **score** — run the repo's own pytest suite (current environment, staged
    repo first on `sys.path`). Reports pass rate, plus `collection_error`
    when the package can't even be imported (the skeleton's natural state).
@@ -84,6 +103,7 @@ benchmarks/commit0/
         prepare.py            workspace staging + task/instructions generation
         cli.py                orchestration, results.json / report.md
         apply.py              generated-src -> package merge policy
+        graft.py              AST function-body grafting + insertion
         score.py              local pytest scoring
     skeletons/                cached clones (gitignored)
     results/                  run outputs (gitignored)

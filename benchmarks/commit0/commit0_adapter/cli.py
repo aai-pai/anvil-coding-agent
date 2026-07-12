@@ -44,7 +44,9 @@ def run_one(client: AnvilClient, repo: str, results_dir: pathlib.Path,
         info = stage_workspace(repo, skeleton, stage_dir)
         result.update(info)
         result["stage_dir"] = str(stage_dir)
-        log(f"    staged: {info['stubs']} stubs across {info['modules']} modules")
+        log(f"    staged: {info['stubs']} stubs across {info['modules']} modules"
+            f" | task {info['task_chars']:,} chars"
+            f" ({info['doc_chars']:,} from docs)")
 
         if baseline:
             base = run_repo_tests(stage_dir, timeout_s=test_timeout_s,
@@ -71,12 +73,12 @@ def run_one(client: AnvilClient, repo: str, results_dir: pathlib.Path,
 
         merged = apply_generated(stage_dir, pathlib.Path(info["package_dir"]))
         result["apply"] = {k: merged[k] for k in
-                           ("generated_py_files", "applied", "unmatched",
-                            "skipped_invalid")}
+                           ("generated_py_files", "applied", "grafted_bodies",
+                            "unmatched", "skipped_invalid")}
         (results_dir / "repos" / f"{repo}-apply.json").write_text(
             json.dumps(merged, indent=2), encoding="utf-8")
-        log(f"    applied {merged['applied']}/{merged['generated_py_files']} "
-            f"generated modules")
+        log(f"    grafted {merged['grafted_bodies']} stub bodies from "
+            f"{merged['applied']}/{merged['generated_py_files']} generated modules")
 
         tests = run_repo_tests(stage_dir, timeout_s=test_timeout_s)
         result["tests"] = {k: tests.get(k) for k in
@@ -159,8 +161,20 @@ def main(argv: list[str] | None = None) -> int:
     server = None
     try:
         if args.start_server:
+            # Library-scale defaults for the spawned server, unless the user
+            # pinned their own values; --base-url users must set these on
+            # their server themselves (see README). Input: the staged task
+            # file (stub inventory + doc excerpts) runs well past the 20k-char
+            # default. Output (#19): doc phases must fit the quoted inventory,
+            # and implementation must fit whole modules.
+            os.environ.setdefault("ANVIL_INPUT_CHAR_LIMIT", "80000")
+            os.environ.setdefault("ANVIL_DOC_MAX_TOKENS", "6000")
+            os.environ.setdefault("ANVIL_CODE_MAX_TOKENS", "16000")
             server = AnvilServer(args.mode, results_dir / "server-workspace")
-            print(f"starting Anvil server ({args.mode}) on {server.base_url} ...")
+            print(f"starting Anvil server ({args.mode}) on {server.base_url} "
+                  f"(input limit {os.environ['ANVIL_INPUT_CHAR_LIMIT']}, "
+                  f"doc budget {os.environ['ANVIL_DOC_MAX_TOKENS']}, "
+                  f"code budget {os.environ['ANVIL_CODE_MAX_TOKENS']}) ...")
             server.start()
             cfg.base_url = server.base_url
         else:

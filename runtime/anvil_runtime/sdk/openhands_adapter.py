@@ -116,8 +116,16 @@ class LLMBackend:
         input_char_limit: int | None = None,
         event_bus: "object | None" = None,
         instructions: str | None = None,
+        intake_max_tokens: int | None = None,
+        doc_max_tokens: int | None = None,
+        code_max_tokens: int | None = None,
     ) -> None:
-        from anvil_runtime.config.schema import DEFAULT_INPUT_CHAR_LIMIT
+        from anvil_runtime.config.schema import (
+            DEFAULT_CODE_MAX_TOKENS,
+            DEFAULT_DOC_MAX_TOKENS,
+            DEFAULT_INPUT_CHAR_LIMIT,
+            DEFAULT_INTAKE_MAX_TOKENS,
+        )
 
         self._provider = provider
         self._root = __import__("pathlib").Path(workspace_root)
@@ -125,6 +133,13 @@ class LLMBackend:
         self._sessions: dict[str, AgentRuntimeConfig] = {}
         # #18 (FR-CTX-001): per-file cap when assembling inputs into prompts.
         self._input_char_limit = input_char_limit or DEFAULT_INPUT_CHAR_LIMIT
+        # v0.1.3 #19: completion budgets per step category. A budget smaller
+        # than the artifact a task needs fails the step with
+        # finish_reason=length on every retry, so these must scale with task
+        # size (config field or ANVIL_*_MAX_TOKENS env override).
+        self._intake_max_tokens = intake_max_tokens or DEFAULT_INTAKE_MAX_TOKENS
+        self._doc_max_tokens = doc_max_tokens or DEFAULT_DOC_MAX_TOKENS
+        self._code_max_tokens = code_max_tokens or DEFAULT_CODE_MAX_TOKENS
         self._events = event_bus
         # #14 (FR-INS-002/003): standing instructions, injected as a dedicated
         # block in every prompt; resolved (and capped) upstream, never truncated
@@ -186,7 +201,8 @@ class LLMBackend:
         mode = str(step.context.get("clarification_mode", "questions"))
         response = self._provider.complete(CompletionRequest(
             model=model, prompt=self._intake_prompt(step, mode),
-            phase=step.phase, subtask=step.subtask, max_tokens=400,
+            phase=step.phase, subtask=step.subtask,
+            max_tokens=self._intake_max_tokens,
         ))
         reason = self._response_failure(response)
         if reason:
@@ -261,7 +277,8 @@ class LLMBackend:
 
         response = self._provider.complete(CompletionRequest(
             model=model, prompt=self._doc_prompt(step),
-            phase=step.phase, subtask=step.subtask, max_tokens=1500,
+            phase=step.phase, subtask=step.subtask,
+            max_tokens=self._doc_max_tokens,
         ))
         reason = self._response_failure(response)
         if reason:
@@ -303,7 +320,8 @@ class LLMBackend:
 
         response = self._provider.complete(CompletionRequest(
             model=model, prompt=self._code_prompt(step),
-            phase=step.phase, subtask=step.subtask, max_tokens=4000,
+            phase=step.phase, subtask=step.subtask,
+            max_tokens=self._code_max_tokens,
         ))
         reason = self._response_failure(response)
         if reason:

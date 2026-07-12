@@ -175,7 +175,11 @@ By default phases route by tier (override per category with the env vars):
 
 Other env knobs: `ANVIL_INPUT_CHAR_LIMIT` — per-file character cap when phase
 inputs are assembled into prompts (default 20,000; truncation emits an
-`InputTruncated` warning event, never silent).
+`InputTruncated` warning event, never silent). Output-side completion budgets
+(v0.1.3 #19): `ANVIL_INTAKE_MAX_TOKENS` (default 400), `ANVIL_DOC_MAX_TOKENS`
+(default 1,500), `ANVIL_CODE_MAX_TOKENS` (default 4,000) — raise these for
+large tasks; a too-small budget fails the phase with `finish_reason=length`
+after retries rather than shipping a truncated artifact.
 
 ### Complexity gating — simple tasks stay lean
 

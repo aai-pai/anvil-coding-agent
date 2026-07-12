@@ -23,6 +23,14 @@ DEFAULT_MAX_RETRIES_PER_PHASE = 2
 # #18 (spec FR-CTX-001): per-file character cap applied when phase inputs are
 # assembled into an LLM prompt; env override ANVIL_INPUT_CHAR_LIMIT.
 DEFAULT_INPUT_CHAR_LIMIT = 20_000
+# v0.1.3 #19: per-step-category completion token budgets (the output-side
+# mirror of #18 — a too-small budget fails the step with finish_reason=length
+# and the task can never fit). Env overrides ANVIL_INTAKE_MAX_TOKENS /
+# ANVIL_DOC_MAX_TOKENS / ANVIL_CODE_MAX_TOKENS. Defaults preserve the v0.1.2
+# hardcoded values.
+DEFAULT_INTAKE_MAX_TOKENS = 400
+DEFAULT_DOC_MAX_TOKENS = 1_500
+DEFAULT_CODE_MAX_TOKENS = 4_000
 DEFAULT_MCP_DISCOVERY_TIMEOUT_SECONDS = 5
 DEFAULT_ARTIFACT_VALIDATION_TIMEOUT_SECONDS = 30
 DEFAULT_DRIFT_CHECK_TIMEOUT_SECONDS = 60
@@ -74,6 +82,10 @@ class EffectiveConfig(BaseModel):
     complexityTier: str | None = None
     # #18 (FR-CTX-001): per-file input character limit for prompt assembly.
     inputCharLimit: int = DEFAULT_INPUT_CHAR_LIMIT
+    # v0.1.3 #19: completion token budgets per step category.
+    intakeMaxTokens: int = DEFAULT_INTAKE_MAX_TOKENS
+    docMaxTokens: int = DEFAULT_DOC_MAX_TOKENS
+    codeMaxTokens: int = DEFAULT_CODE_MAX_TOKENS
 
 
 __all__ = [

@@ -106,9 +106,17 @@ def _build_real_manager(
         overrides.update(coding=coding_model, debugging=coding_model)
     # #18 (FR-CTX-001): env override > config field > default.
     input_char_limit = int(os.environ.get("ANVIL_INPUT_CHAR_LIMIT") or cfg.inputCharLimit)
+    # v0.1.3 #19: same precedence for the output-side completion budgets.
+    intake_max_tokens = int(
+        os.environ.get("ANVIL_INTAKE_MAX_TOKENS") or cfg.intakeMaxTokens)
+    doc_max_tokens = int(os.environ.get("ANVIL_DOC_MAX_TOKENS") or cfg.docMaxTokens)
+    code_max_tokens = int(os.environ.get("ANVIL_CODE_MAX_TOKENS") or cfg.codeMaxTokens)
     backend = LLMBackend(
         provider, workspace_root, input_char_limit=input_char_limit, event_bus=bus,
         instructions=instructions,
+        intake_max_tokens=intake_max_tokens,
+        doc_max_tokens=doc_max_tokens,
+        code_max_tokens=code_max_tokens,
     )
     # FR-ML-004: a configured allowedModels list becomes an enforced whitelist
     # (with switch-to-allowed remediation); an empty list means unrestricted.
