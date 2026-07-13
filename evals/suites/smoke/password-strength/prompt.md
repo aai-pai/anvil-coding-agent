@@ -3,6 +3,8 @@
 Build a Python library that scores password strength with a pytest suite of
 its own (include tests — this is a quality-sensitive component).
 
+<!-- anvil:contract -->
+
 ## Interface contract (must be followed exactly)
 
 - The source file must be `src/password_strength.py`.

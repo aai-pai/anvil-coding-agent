@@ -170,11 +170,16 @@ def main(argv: list[str] | None = None) -> int:
             os.environ.setdefault("ANVIL_INPUT_CHAR_LIMIT", "80000")
             os.environ.setdefault("ANVIL_DOC_MAX_TOKENS", "6000")
             os.environ.setdefault("ANVIL_CODE_MAX_TOKENS", "16000")
+            # #20: a library-scale contract (stub inventory + manifest JSON)
+            # runs past the 16k default; the cap fails intake loudly, so give
+            # it headroom rather than shrinking the pinned inventory.
+            os.environ.setdefault("ANVIL_CONTRACT_MAX_CHARS", "48000")
             server = AnvilServer(args.mode, results_dir / "server-workspace")
             print(f"starting Anvil server ({args.mode}) on {server.base_url} "
                   f"(input limit {os.environ['ANVIL_INPUT_CHAR_LIMIT']}, "
                   f"doc budget {os.environ['ANVIL_DOC_MAX_TOKENS']}, "
-                  f"code budget {os.environ['ANVIL_CODE_MAX_TOKENS']}) ...")
+                  f"code budget {os.environ['ANVIL_CODE_MAX_TOKENS']}, "
+                  f"contract cap {os.environ['ANVIL_CONTRACT_MAX_CHARS']}) ...")
             server.start()
             cfg.base_url = server.base_url
         else:

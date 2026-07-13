@@ -3,6 +3,8 @@
 Build a Python library for tracking a small shop's inventory, with JSON
 persistence, input validation, and a pytest suite covering the edge cases.
 
+<!-- anvil:contract -->
+
 ## Interface contract (must be followed exactly)
 
 - The source file must be `src/inventory.py`, defining a class `Inventory`.

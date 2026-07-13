@@ -15,6 +15,7 @@ import shutil
 from commit0_adapter.repos import find_package_dir
 from commit0_adapter.stubs import (
     render_inventory,
+    render_manifest,
     scan_package,
     scan_package_missing,
 )
@@ -47,17 +48,20 @@ function inventory VERBATIM — never summarize or paraphrase it. A correct
 implementation under a different name is a failure.
 """
 
+# #20: the binding facts live in a marked contract block (injected VERBATIM
+# into every Anvil phase prompt, never truncated); the readme/doc excerpts are
+# context (summarizable, intake/proposal input only). The fenced
+# contract-manifest (#21) lets Anvil's validator AST-check the generated code
+# against the pinned inventory mechanically.
 TASK_TEMPLATE = """\
 # Implement the `{repo}` library from its skeleton
+
+<!-- anvil:contract -->
 
 This workspace contains the real `{repo}` Python library with every function
 body stripped to `pass`. Signatures, docstrings, and module structure are
 intact and MUST NOT change. Implement every stub so the library's own unit
 test suite (in `tests/`) passes.
-
-## About the library
-
-{readme_excerpt}
 
 ## Output contract (must be followed exactly)
 
@@ -69,6 +73,16 @@ docstrings must match the skeleton exactly.
 ## Module and stub inventory
 
 {inventory}
+
+```contract-manifest
+{manifest}
+```
+
+<!-- anvil:context -->
+
+## About the library
+
+{readme_excerpt}
 """
 
 # Behavioral documentation first; project-process files never (they spend
@@ -143,16 +157,39 @@ def stage_workspace(repo: str, skeleton_dir: pathlib.Path,
     stub_count = sum(1 for e in entries if e.is_stub)
     missing = scan_package_missing(package_dir)
     inventory = render_inventory(entries, missing_by_module=missing)
+    manifest = render_manifest(entries, missing_by_module=missing)
 
     task = TASK_TEMPLATE.format(repo=repo,
                                 readme_excerpt=_readme_excerpt(stage_dir),
-                                inventory=inventory)
-    # Docs go AFTER the stub inventory: if a server's ANVIL_INPUT_CHAR_LIMIT
-    # is lower than this file, truncation cuts the tail — losing doc excerpts
-    # is survivable, losing the pinned contract is not.
+                                inventory=inventory,
+                                manifest=manifest)
+    # Docs land in the context section (after the anvil:context marker): the
+    # contract block is injected verbatim and never truncated (#20), while
+    # context is a normal truncatable intake/proposal input — losing doc
+    # excerpts to the input cap is survivable, losing the contract is not.
     docs = _docs_excerpt(stage_dir)
     if docs:
         task += f"\n## Library documentation (excerpts)\n\n{docs}\n"
+
+    # #22: pre-stage every module needing work under src/ so Anvil's
+    # per-artifact implementation reads exactly the stub file it is
+    # completing (and generated files land on the same relative paths
+    # apply_generated maps back onto the package).
+    manifest_files = [e.module for e in entries if e.is_stub]
+    for module in missing:
+        if module not in manifest_files:
+            manifest_files.append(module)
+    seen: list[str] = []
+    for module in manifest_files:
+        if module in seen:
+            continue
+        seen.append(module)
+        source = package_dir / module
+        if not source.is_file():
+            continue
+        src_target = stage_dir / "src" / module
+        src_target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, src_target)
 
     dk_dir = stage_dir / "domain-knowledge"
     dk_dir.mkdir(exist_ok=True)
@@ -164,6 +201,8 @@ def stage_workspace(repo: str, skeleton_dir: pathlib.Path,
         "modules": len({e.module for e in entries}),
         "functions": len(entries),
         "stubs": stub_count,
+        "manifest_files": len(seen),
+        "prestaged_src": len(seen),
         "task_chars": len(task),
         "doc_chars": len(docs),
     }

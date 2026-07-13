@@ -3,6 +3,8 @@
 Build a small Python helper that converts US dollar amounts to integer cents,
 suitable for money-safe arithmetic.
 
+<!-- anvil:contract -->
+
 ## Interface contract (must be followed exactly)
 
 - The source file must be `src/currency.py`.

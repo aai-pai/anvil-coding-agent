@@ -21,6 +21,12 @@ python evals/run_eval.py run --suite smoke --start-server --mode offline-llm
 $env:OPENROUTER_API_KEY = "sk-or-..."
 python evals/run_eval.py run --suite smoke --start-server --mode real --label v0.1.2 --pricing evals/pricing.json
 
+# 2b. The v0.1.3 acceptance run: each prompt is submitted WITHOUT its
+#     per-task anvil-instructions.md, so the prompts' <!-- anvil:contract -->
+#     markers must carry the interface alone (#20 replaces the workaround).
+#     Must hold 6/6:
+python evals/run_eval.py run --suite smoke --start-server --mode real --label v0.1.3 --no-task-instructions --pricing evals/pricing.json
+
 # 3. Compare two releases:
 python evals/run_eval.py compare evals/results/<old>/results.json evals/results/<new>/results.json
 

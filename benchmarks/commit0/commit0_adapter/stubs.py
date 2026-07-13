@@ -180,4 +180,32 @@ def render_inventory(entries: list[StubEntry], char_budget: int = 14000,
     return "\n".join(lines)
 
 
-__all__ = ["StubEntry", "scan_module", "scan_package", "render_inventory"]
+def render_manifest(entries: list[StubEntry],
+                    missing_by_module: dict[str, list[str]] | None = None) -> str:
+    """JSON ``contract-manifest`` (#21) from the stub inventory.
+
+    Files: every module that needs work (has stubs or dangling references) —
+    these are also the per-artifact targets Anvil iterates (#22). Symbols:
+    every stub, pinned by qualname + exact signature, so Anvil's validator
+    can AST-check the generated code mechanically. Paths are src-relative
+    (the same package-relative paths ``apply`` maps back onto the package).
+    """
+    import json
+
+    missing_by_module = missing_by_module or {}
+    files: list[str] = []
+    for entry in entries:
+        if entry.is_stub and entry.module not in files:
+            files.append(entry.module)
+    for module in missing_by_module:
+        if module not in files:
+            files.append(module)
+    symbols = [
+        {"qualname": e.qualname, "signature": e.signature, "file": e.module}
+        for e in entries if e.is_stub
+    ]
+    return json.dumps({"files": files, "symbols": symbols}, indent=2)
+
+
+__all__ = ["StubEntry", "scan_module", "scan_package", "render_inventory",
+           "render_manifest"]

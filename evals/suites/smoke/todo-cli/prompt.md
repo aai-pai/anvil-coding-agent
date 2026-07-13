@@ -3,6 +3,8 @@
 Build a command-line to-do list manager in Python with persistent storage and
 input validation, including a pytest suite.
 
+<!-- anvil:contract -->
+
 ## Interface contract (must be followed exactly)
 
 - The entry point must be `src/todo.py`, runnable as `python todo.py <command> ...`.

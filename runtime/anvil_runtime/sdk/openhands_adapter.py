@@ -119,9 +119,11 @@ class LLMBackend:
         intake_max_tokens: int | None = None,
         doc_max_tokens: int | None = None,
         code_max_tokens: int | None = None,
+        contract_max_chars: int | None = None,
     ) -> None:
         from anvil_runtime.config.schema import (
             DEFAULT_CODE_MAX_TOKENS,
+            DEFAULT_CONTRACT_MAX_CHARS,
             DEFAULT_DOC_MAX_TOKENS,
             DEFAULT_INPUT_CHAR_LIMIT,
             DEFAULT_INTAKE_MAX_TOKENS,
@@ -140,6 +142,9 @@ class LLMBackend:
         self._intake_max_tokens = intake_max_tokens or DEFAULT_INTAKE_MAX_TOKENS
         self._doc_max_tokens = doc_max_tokens or DEFAULT_DOC_MAX_TOKENS
         self._code_max_tokens = code_max_tokens or DEFAULT_CODE_MAX_TOKENS
+        # v0.1.3 #20: the task-contract block is injected verbatim (never
+        # truncated); an over-cap contract fails the run at intake instead.
+        self._contract_max_chars = contract_max_chars or DEFAULT_CONTRACT_MAX_CHARS
         self._events = event_bus
         # #14 (FR-INS-002/003): standing instructions, injected as a dedicated
         # block in every prompt; resolved (and capped) upstream, never truncated
@@ -198,6 +203,20 @@ class LLMBackend:
     def _run_intake(self, session_id: str, step: PhaseStep, model: str) -> StepResult:
         from anvil_runtime.llm.openrouter_provider import CompletionRequest
 
+        # #20: an over-cap contract fails the run AT INTAKE with a clear
+        # reason — the block is exempt from the input limit and must never be
+        # clipped (a clipped contract is worse than none).
+        contract = self._resolve_contract()
+        if contract.present and contract.length > self._contract_max_chars:
+            return self._failed_step(
+                session_id, step,
+                f"contract block is {contract.length:,} chars, over the "
+                f"{self._contract_max_chars:,}-char cap "
+                "(ANVIL_CONTRACT_MAX_CHARS); the contract is injected verbatim "
+                "into every phase and is never truncated — shrink the contract "
+                "block (move prose to the context section) or raise the cap",
+                usage={},
+            )
         mode = str(step.context.get("clarification_mode", "questions"))
         response = self._provider.complete(CompletionRequest(
             model=model, prompt=self._intake_prompt(step, mode),
@@ -229,6 +248,7 @@ class LLMBackend:
             "whether the project background information below is complete enough "
             "to design and build the project.",
             *self._instructions_block(),
+            *self._contract_block(),
             ("Background information:\n" + ctx) if ctx else "Background information: (empty)",
         ]
         if mode == "assumptions":
@@ -259,15 +279,23 @@ class LLMBackend:
         return questions[: self.MAX_INTAKE_QUESTIONS], assumptions
 
     def _append_assumptions(self, step: PhaseStep, assumptions: list[str]) -> str:
-        """Append recorded assumptions to the domain-knowledge file (FR-INT-010)."""
+        """Append recorded assumptions to the domain-knowledge file (FR-INT-010).
+
+        #20: on a contract-markered file the assumptions land *inside* the
+        contract block — a recorded default is a binding fact, not prose — so
+        every later phase receives them verbatim. Unmarkered files keep the
+        v0.1.2 append-at-end behavior byte-for-byte.
+        """
+        from anvil_runtime.contract import append_block
+
         rel = step.input_files[0] if step.input_files else (
             "domain-knowledge/background-information.md"
         )
         target = self._root / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         existing = target.read_text(encoding="utf-8") if target.is_file() else ""
-        block = "\n## Assumptions\n\n" + "\n".join(f"- {a}" for a in assumptions) + "\n"
-        target.write_text(existing.rstrip("\n") + "\n" + block, encoding="utf-8")
+        block = "\n## Assumptions\n\n" + "\n".join(f"- {a}" for a in assumptions)
+        target.write_text(append_block(existing, block), encoding="utf-8")
         return rel
 
     # -- document phases --------------------------------------------------
@@ -315,7 +343,31 @@ class LLMBackend:
 
     # -- code phase (multi-file) -----------------------------------------
 
+    # #22: bounded in-step retry per target file, so one flaky completion
+    # re-runs that file only — never the files already generated.
+    PER_FILE_ATTEMPTS = 2
+    # Safety valve on plan-derived target lists (a runaway plan should fail
+    # visibly through the single-completion path, not spawn hundreds of calls).
+    MAX_PLAN_TARGETS = 40
+
     def _run_code(self, session_id: str, step: PhaseStep, model: str) -> StepResult:
+        """Implementation phase (#22): per-artifact when a file list is known.
+
+        The v0.1.2 single completion for all of ``src/`` capped the whole
+        project at one ``codeMaxTokens`` budget and regenerated files it had
+        never seen (skeleton blindness — the Commit0 tinydb import-fail).
+        When the contract manifest or the plan names the output files, each
+        file gets its own completion (and its own budget), and an existing
+        target's current source is included in that file's prompt. With no
+        derivable file list the v0.1.2 single-completion behavior is
+        preserved exactly.
+        """
+        targets = self._code_targets(step)
+        if not targets:
+            return self._run_code_single(session_id, step, model)
+        return self._run_code_per_file(session_id, step, model, targets)
+
+    def _run_code_single(self, session_id: str, step: PhaseStep, model: str) -> StepResult:
         from anvil_runtime.llm.openrouter_provider import CompletionRequest
 
         response = self._provider.complete(CompletionRequest(
@@ -334,15 +386,178 @@ class LLMBackend:
             usage=response.usage,
         )
 
+    def _code_targets(self, step: PhaseStep) -> list[str]:
+        """The phase's output-file list: contract manifest first, then plan.
+
+        Order is preserved (manifest order, else first mention in the plan
+        docs); paths are sandboxed under the phase's allowed outputs.
+        """
+        allowed = [o.rstrip("/") for o in step.output_paths] or ["src"]
+        targets: list[str] = []
+
+        def add(path: str) -> None:
+            rel = path.replace("\\", "/").strip()
+            if not rel:
+                return
+            if not any(rel == a or rel.startswith(a + "/") for a in allowed):
+                rel = f"{allowed[0]}/{rel}"
+            rel = self._sandbox(rel, allowed)
+            if rel not in targets:
+                targets.append(rel)
+
+        # 1) The contract-manifest file list (#21) is authoritative when present.
+        from anvil_runtime.contract import parse_contract_manifest
+
+        contract = self._resolve_contract()
+        if contract.present:
+            manifest, _error = parse_contract_manifest(contract.text)
+            if manifest is not None and manifest.files:
+                for rel in manifest.files:
+                    add(rel)
+                return targets
+
+        # 2) Files the plan/blueprint name explicitly under an output prefix.
+        import re
+
+        prefixes = "|".join(re.escape(a) for a in allowed)
+        pattern = re.compile(rf"\b(?:{prefixes})/[A-Za-z0-9_\-./]*\.[A-Za-z0-9]+")
+        for rel in step.input_files:
+            source = self._root / rel
+            if not source.is_file():
+                continue
+            for match in pattern.findall(source.read_text(encoding="utf-8")):
+                add(match)
+                if len(targets) >= self.MAX_PLAN_TARGETS:
+                    return targets
+        return targets
+
+    def _run_code_per_file(
+        self, session_id: str, step: PhaseStep, model: str, targets: list[str]
+    ) -> StepResult:
+        from anvil_runtime.llm.openrouter_provider import CompletionRequest
+
+        total = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        written: list[str] = []
+        for rel in targets:
+            reason: str | None = None
+            response = None
+            for _attempt in range(self.PER_FILE_ATTEMPTS):
+                response = self._provider.complete(CompletionRequest(
+                    model=model, prompt=self._file_prompt(step, rel, targets),
+                    phase=step.phase, subtask=step.subtask,
+                    max_tokens=self._code_max_tokens,
+                ))
+                for key in total:
+                    total[key] += int(response.usage.get(key, 0))
+                reason = self._response_failure(response)
+                if reason is None:
+                    break
+            if reason is not None:
+                # Partial output stays on disk: a phase retry regenerates it,
+                # and the failure names the offending file for the record.
+                return self._failed_step(
+                    session_id, step, f"{rel}: {reason}", total
+                )
+            target = self._root / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(self._strip_fences(response.content), encoding="utf-8")
+            written.append(rel)
+            # #22: per-file usage on the existing event type, tagged with the
+            # artifact; the SessionBridge still reports the phase aggregate.
+            self._emit_artifact_usage(step, rel, dict(response.usage))
+        return StepResult(
+            session_id=session_id, phase=step.phase, status="success",
+            output=f"generated {len(written)} files: " + ", ".join(written[:8]),
+            artifacts=written,
+            usage=total,
+        )
+
+    def _file_prompt(self, step: PhaseStep, rel: str, targets: list[str]) -> str:
+        ctx = self._read_inputs(step)
+        lines = [
+            "You are the implementation phase agent. Generate exactly ONE file "
+            f"of the project: `{rel}`.",
+            *self._instructions_block(),
+            *self._contract_block(),
+            ("Project context:\n" + ctx) if ctx else "Build the file described by the plan.",
+            "All files being generated in this phase: " + ", ".join(targets) + ".",
+        ]
+        existing = self._existing_source(step, rel)
+        if existing is not None:
+            lines.append(
+                f"Current content of `{rel}` — complete it IN PLACE: keep every "
+                "existing import, name, signature, docstring, and provided "
+                "definition exactly as written; implement only the missing "
+                "bodies:\n" + existing
+            )
+        lines.append(
+            f"Output ONLY the complete, final contents of `{rel}` — no "
+            "commentary, no file markers, no surrounding code fences."
+        )
+        return "\n\n".join(lines)
+
+    def _existing_source(self, step: PhaseStep, rel: str) -> str | None:
+        """The target file's current source, when it already exists (#22).
+
+        A stub, partial, or prior version of the file the phase is about to
+        generate is the ground truth it must preserve; subject to the #18
+        input cap (truncation is never silent).
+        """
+        target = self._root / rel
+        if not target.is_file():
+            return None
+        text = target.read_text(encoding="utf-8")
+        if len(text) > self._input_char_limit:
+            self._emit_truncation(step, rel, len(text), self._input_char_limit)
+            text = text[: self._input_char_limit]
+        return text
+
+    @staticmethod
+    def _strip_fences(content: str) -> str:
+        """Unwrap a single-file response from stray fences/markers."""
+        import re
+
+        body = content.strip("\n")
+        # Tolerate a model that emits the multi-file marker despite the
+        # single-file instruction.
+        body = re.sub(r"^===\s*FILE:.*?===\s*\n", "", body)
+        if body.startswith("```"):
+            body = re.sub(r"^```[a-zA-Z0-9_+-]*\n", "", body)
+            body = re.sub(r"\n?```\s*$", "", body)
+        return body
+
+    def _emit_artifact_usage(self, step: PhaseStep, rel: str, usage: dict[str, int]) -> None:
+        if self._events is None or not usage:
+            return
+        from anvil_runtime.core.phase_contracts import EventEnvelope
+
+        self._events.emit(EventEnvelope(
+            timestamp=self._clock(), eventType="TokenUsageReported",
+            runId=str(step.context.get("run_id", "") or ""),
+            phase=step.phase, severity="info",
+            data={"artifact": rel, **usage},
+        ))
+
     # -- prompts ----------------------------------------------------------
 
     def _read_inputs(self, step: PhaseStep) -> str:
+        from anvil_runtime.contract import DOMAIN_KNOWLEDGE_REL, split_contract
+
         limit = self._input_char_limit
         chunks: list[str] = []
         for rel in step.input_files:
             target = self._root / rel
             if target.is_file():
                 text = target.read_text(encoding="utf-8")
+                if rel == DOMAIN_KNOWLEDGE_REL:
+                    # #20: on a markered file only the CONTEXT part travels as
+                    # a normal (truncatable) input; the contract block is
+                    # injected verbatim via _contract_block instead, so it is
+                    # never duplicated and never clipped. Unmarkered files
+                    # pass through untouched (v0.1.2 behavior).
+                    split = split_contract(text)
+                    if split.has_markers:
+                        text = split.context
                 if len(text) > limit:
                     # FR-CTX-002: truncation is never silent.
                     self._emit_truncation(step, rel, len(text), limit)
@@ -371,12 +586,34 @@ class LLMBackend:
             "defaults, fallbacks, and conventions:\n" + self._instructions
         ]
 
+    def _resolve_contract(self):  # noqa: ANN202 - ResolvedContract
+        """Resolve the run's task contract fresh (per prompt assembly, #20)."""
+        from anvil_runtime.contract import resolve_contract
+
+        return resolve_contract(self._root)
+
+    def _contract_block(self) -> list[str]:
+        """The verbatim task-contract prompt block, or empty (#20).
+
+        The task-scoped analog of the #14 instructions block: resolved at
+        prompt-assembly time from the run's domain-knowledge file, prefixed
+        with the fixed binding preamble, exempt from the input char limit,
+        and injected into EVERY phase prompt (intake through cleanup).
+        """
+        from anvil_runtime.contract import CONTRACT_PREAMBLE
+
+        contract = self._resolve_contract()
+        if not contract.present:
+            return []
+        return [CONTRACT_PREAMBLE + "\n\n" + contract.text]
+
     def _doc_prompt(self, step: PhaseStep) -> str:
         sections = self._required_sections(step.phase)
         ctx = self._read_inputs(step)
         lines = [
             f"You are the '{step.phase}' phase agent in an automated software factory.",
             *self._instructions_block(),
+            *self._contract_block(),
             step.instruction,
         ]
         if ctx:
@@ -404,6 +641,7 @@ class LLMBackend:
             "You are the implementation phase agent. Output the COMPLETE, runnable "
             "source code for the project described below.",
             *self._instructions_block(),
+            *self._contract_block(),
             ("Project context:\n" + ctx) if ctx else "Build the project described by the plan.",
             f"Place files under: {out}. Include a runnable entry point.",
             "Output ONLY the files (no explanation, no commentary) using EXACTLY this "

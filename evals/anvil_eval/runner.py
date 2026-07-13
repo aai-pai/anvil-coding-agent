@@ -70,9 +70,21 @@ def run_task(client: AnvilClient, task: Task, cfg: EvalConfig,
         "workspace": str(base_ws),
     }
     wall_start = time.monotonic()
+    prompt_path = task.prompt_path
+    if not cfg.task_instructions:
+        # #20 acceptance condition: the runtime copies a sibling
+        # anvil-instructions.md automatically (FR-INS-005), so stage the
+        # prompt ALONE to run without the per-task fidelity workaround.
+        staged = task_results_dir / "prompt-only"
+        staged.mkdir(parents=True, exist_ok=True)
+        prompt_path = staged / task.prompt_path.name
+        prompt_path.write_text(
+            task.prompt_path.read_text(encoding="utf-8"), encoding="utf-8"
+        )
+        result["task_instructions"] = False
     try:
         started = client.start_run(
-            source_path=str(task.prompt_path), workspace=str(base_ws),
+            source_path=str(prompt_path), workspace=str(base_ws),
             mode=cfg.run_mode, security_profile=cfg.security_profile, defer=True,
         )
         run_id = started["run_id"]

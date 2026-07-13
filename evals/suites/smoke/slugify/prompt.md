@@ -2,6 +2,8 @@
 
 Build a Python utility that turns arbitrary titles into URL-safe slugs.
 
+<!-- anvil:contract -->
+
 ## Interface contract (must be followed exactly)
 
 - The source file must be `src/slugger.py`.

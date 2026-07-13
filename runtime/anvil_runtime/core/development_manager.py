@@ -143,6 +143,8 @@ class _RunContext:
         # #15: bounded-clarification state (FR-INT-007..009).
         self.clarification_round: int = 0
         self.pending_questions: list[str] = []
+        # #20: True once the task-contract block is sealed (post-intake).
+        self.contract_sealed: bool = False
 
 
 def _locked(method: Callable) -> Callable:
@@ -490,6 +492,11 @@ class DevelopmentManager:
             and self._clarification_mode(ctx) == "questions"
         ):
             return self._pause_for_clarification(ctx, result.complete_event.questions)
+        # #20: intake finished without pausing -> the contract block is final.
+        # Clarification answers and assumptions have been appended into it;
+        # from here on it is sealed and later writes are rejected.
+        if next_phase == "intake" and result.status == "success":
+            self._seal_contract(ctx)
         # Post-phase gate (e.g., post-proposal).
         post_gate = ctx.post_gates.get(next_phase)
         if post_gate and not self._gate_satisfied(ctx, post_gate):
@@ -527,6 +534,26 @@ class DevelopmentManager:
         self._emit(ctx.run_id, "ApprovalRequired", phase, data={"gate": gate})
         return self._progress(ctx, current_phase=phase)
 
+    def _seal_contract(self, ctx: _RunContext) -> None:
+        """Seal the run's task-contract block after final intake (#20).
+
+        Only a markered file with a non-empty contract block is sealed; an
+        unmarkered (v0.1.2-style) file has nothing to seal and its behavior
+        stays byte-for-byte unchanged.
+        """
+        if ctx.contract_sealed:
+            return
+        from anvil_runtime.contract import resolve_contract
+
+        resolved = resolve_contract(self._root)
+        if not resolved.present:
+            return
+        ctx.contract_sealed = True
+        self._checkpoints.save_run_meta(ctx.run_id, contract_sealed=True)
+        self._emit(ctx.run_id, "ContractSealed", "intake", data={
+            "length": resolved.length, "path": resolved.path,
+        })
+
     # -- clarification (#15) ----------------------------------------------
 
     def _clarification_mode(self, ctx: _RunContext) -> str:
@@ -558,6 +585,13 @@ class DevelopmentManager:
         checkpoint is invalidated, and the run resumes.
         """
         ctx = self._require_run(run_id)
+        # #20: after ContractSealed the block is immutable — reject the write
+        # explicitly (not just as a state error) so the caller learns why.
+        if ctx.contract_sealed:
+            raise ValueError(
+                f"Run '{run_id}' contract is sealed (ContractSealed); "
+                "post-intake writes to the contract block are rejected"
+            )
         if ctx.status != "awaiting_clarification":
             raise ValueError(f"Run '{run_id}' is not awaiting clarification")
         self._append_clarifications(ctx, answers)
@@ -581,7 +615,16 @@ class DevelopmentManager:
         )
 
     def _append_clarifications(self, ctx: _RunContext, answers: list[str]) -> None:
+        """Record answers in the domain-knowledge file (FR-INT-008).
+
+        #20: an answered question is a binding fact, not prose — on a
+        contract-markered file the block lands *inside* the contract section
+        so re-injection reflects it in every later phase. Unmarkered files
+        keep the v0.1.2 append-at-end behavior byte-for-byte.
+        """
         import pathlib
+
+        from anvil_runtime.contract import append_block
 
         target = pathlib.Path(self._root) / "domain-knowledge" / "background-information.md"
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -592,9 +635,7 @@ class DevelopmentManager:
             question = questions[index] if index < len(questions) else "(additional)"
             lines.append(f"- **Q:** {question}")
             lines.append(f"  **A:** {answer}")
-        target.write_text(
-            existing.rstrip("\n") + "\n" + "\n".join(lines) + "\n", encoding="utf-8"
-        )
+        target.write_text(append_block(existing, "\n".join(lines)), encoding="utf-8")
 
     # -- approvals & overrides -------------------------------------------
 
@@ -709,6 +750,8 @@ class DevelopmentManager:
         ctx.approved_gates = set(state.approved_gates)
         ctx.excluded = set(state.excluded_phases)
         ctx.clarification_round = state.clarification_round
+        # #20: a sealed contract stays sealed across restarts.
+        ctx.contract_sealed = state.contract_sealed
         # A pause that was active at shutdown is restored, not skipped: a
         # post-gate is only ever checked in the step that completed its phase.
         if state.pending_gate and not self._gate_satisfied(ctx, state.pending_gate):

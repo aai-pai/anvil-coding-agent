@@ -180,6 +180,42 @@ inputs are assembled into prompts (default 20,000; truncation emits an
 (default 1,500), `ANVIL_CODE_MAX_TOKENS` (default 4,000) — raise these for
 large tasks; a too-small budget fails the phase with `finish_reason=length`
 after retries rather than shipping a truncated artifact.
+`ANVIL_CONTRACT_MAX_CHARS` (default 16,000) — hard cap on the task-contract
+block (see below); an over-cap contract fails the run at intake rather than
+ever being clipped.
+
+### Task contracts — pin the facts that must survive (v0.1.3)
+
+Large or interface-precise tasks can mark a **contract** section in
+`background-information.md`:
+
+```markdown
+# My task
+
+<!-- anvil:contract -->
+(binding facts: file names, signatures, formats — injected VERBATIM into
+ every phase prompt, never truncated, never paraphrased)
+<!-- anvil:context -->
+(background prose, docs, examples — summarizable; read by intake/proposal only)
+```
+
+- The contract block travels verbatim to **every** phase, so pinned names and
+  signatures cannot drift in the phase-to-phase retelling. A file without
+  markers behaves exactly as before (all context, nothing pinned).
+- Intake clarification answers and recorded assumptions are appended *into*
+  the contract block; when intake finishes, the block is **sealed**
+  (`ContractSealed` event) and later writes are rejected.
+- The contract may embed a fenced ```` ```contract-manifest ```` JSON block
+  (`{"files": [...], "symbols": [{"qualname", "signature", "file"}]}`, paths
+  relative to `src/`). After implementation, Anvil AST-checks the generated
+  code against it — a missing file/symbol or changed signature fails the
+  phase into the normal retry path, with the offender named.
+- When the manifest (or the plan) names the output files, the implementation
+  phase generates **one completion per file** — each under
+  `ANVIL_CODE_MAX_TOKENS`, with per-file usage on the event stream — and if a
+  target file already exists (a stub or skeleton), its current source is
+  included in that file's prompt to be completed in place, not regenerated
+  blind.
 
 ### Complexity gating — simple tasks stay lean
 

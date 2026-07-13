@@ -3,6 +3,8 @@
 Build a small Python tool that converts temperatures from Celsius to
 Fahrenheit.
 
+<!-- anvil:contract -->
+
 ## Interface contract (must be followed exactly)
 
 - The source file must be `src/convert.py`.

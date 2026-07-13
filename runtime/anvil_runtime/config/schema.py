@@ -31,6 +31,12 @@ DEFAULT_INPUT_CHAR_LIMIT = 20_000
 DEFAULT_INTAKE_MAX_TOKENS = 400
 DEFAULT_DOC_MAX_TOKENS = 1_500
 DEFAULT_CODE_MAX_TOKENS = 4_000
+# v0.1.3 #20: hard cap on the task-contract block. The contract is injected
+# VERBATIM into every phase prompt and is exempt from ANVIL_INPUT_CHAR_LIMIT,
+# so it is never truncated — an over-cap contract fails the run at intake
+# instead (a clipped contract is worse than none). Env override
+# ANVIL_CONTRACT_MAX_CHARS.
+DEFAULT_CONTRACT_MAX_CHARS = 16_000
 DEFAULT_MCP_DISCOVERY_TIMEOUT_SECONDS = 5
 DEFAULT_ARTIFACT_VALIDATION_TIMEOUT_SECONDS = 30
 DEFAULT_DRIFT_CHECK_TIMEOUT_SECONDS = 60
@@ -86,6 +92,8 @@ class EffectiveConfig(BaseModel):
     intakeMaxTokens: int = DEFAULT_INTAKE_MAX_TOKENS
     docMaxTokens: int = DEFAULT_DOC_MAX_TOKENS
     codeMaxTokens: int = DEFAULT_CODE_MAX_TOKENS
+    # v0.1.3 #20: never-truncate cap for the task-contract block.
+    contractMaxChars: int = DEFAULT_CONTRACT_MAX_CHARS
 
 
 __all__ = [
@@ -93,6 +101,10 @@ __all__ = [
     "DEFAULT_SECURITY_PROFILE",
     "DEFAULT_MAX_RETRIES_PER_PHASE",
     "DEFAULT_INPUT_CHAR_LIMIT",
+    "DEFAULT_INTAKE_MAX_TOKENS",
+    "DEFAULT_DOC_MAX_TOKENS",
+    "DEFAULT_CODE_MAX_TOKENS",
+    "DEFAULT_CONTRACT_MAX_CHARS",
     "DEFAULT_MCP_DISCOVERY_TIMEOUT_SECONDS",
     "DEFAULT_ARTIFACT_VALIDATION_TIMEOUT_SECONDS",
     "DEFAULT_DRIFT_CHECK_TIMEOUT_SECONDS",

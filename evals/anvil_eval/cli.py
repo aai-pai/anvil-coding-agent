@@ -59,6 +59,10 @@ def _build_parser() -> argparse.ArgumentParser:
                      help="JSON file: {model-slug: usd per 1M tokens} for cost estimates")
     run.add_argument("--timeout", type=float, default=None,
                      help="per-task wall-clock timeout in seconds")
+    run.add_argument("--no-task-instructions", action="store_true",
+                     help="submit each prompt WITHOUT its per-task "
+                          "anvil-instructions.md (v0.1.3 #20 acceptance run: "
+                          "contract markers must carry the interface alone)")
 
     lst = sub.add_parser("list", help="list the tasks in a suite")
     lst.add_argument("--suite", required=True)
@@ -95,6 +99,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
         cfg.task_timeout_s = args.timeout
     if args.pricing:
         cfg.pricing = load_pricing(args.pricing)
+    if args.no_task_instructions:
+        cfg.task_instructions = False
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     results_root = pathlib.Path(args.results) if args.results else DEFAULT_RESULTS_ROOT
@@ -129,6 +135,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
             "base_url": cfg.base_url,
             "execution_mode": execution_mode,
             "run_mode": cfg.run_mode,
+            "task_instructions": cfg.task_instructions,
             "task_ids": [t.id for t in tasks],
         }
         results = run_suite(client, tasks, cfg, results_dir)

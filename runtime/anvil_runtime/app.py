@@ -111,12 +111,16 @@ def _build_real_manager(
         os.environ.get("ANVIL_INTAKE_MAX_TOKENS") or cfg.intakeMaxTokens)
     doc_max_tokens = int(os.environ.get("ANVIL_DOC_MAX_TOKENS") or cfg.docMaxTokens)
     code_max_tokens = int(os.environ.get("ANVIL_CODE_MAX_TOKENS") or cfg.codeMaxTokens)
+    # v0.1.3 #20: the task-contract cap follows the same precedence.
+    contract_max_chars = int(
+        os.environ.get("ANVIL_CONTRACT_MAX_CHARS") or cfg.contractMaxChars)
     backend = LLMBackend(
         provider, workspace_root, input_char_limit=input_char_limit, event_bus=bus,
         instructions=instructions,
         intake_max_tokens=intake_max_tokens,
         doc_max_tokens=doc_max_tokens,
         code_max_tokens=code_max_tokens,
+        contract_max_chars=contract_max_chars,
     )
     # FR-ML-004: a configured allowedModels list becomes an enforced whitelist
     # (with switch-to-allowed remediation); an empty list means unrestricted.

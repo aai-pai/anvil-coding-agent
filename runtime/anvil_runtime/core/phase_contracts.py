@@ -229,6 +229,10 @@ class RunState(BaseModel):
     # step that completes its phase, so an unpersisted pause would be skipped.
     pending_gate: str | None = None
     pending_questions: list[str] = Field(default_factory=list)
+    # v0.1.3 #20: once intake finishes, the task-contract block is sealed
+    # (ContractSealed) and later writes are rejected; a resume must rehydrate
+    # the seal or a restarted run could mutate binding facts mid-pipeline.
+    contract_sealed: bool = False
 
 
 __all__ = [

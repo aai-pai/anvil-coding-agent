@@ -12,7 +12,9 @@ reflect Anvil as users get it.
 ```powershell
 # From the repo root.
 
-# Plumbing self-test (no key; placeholder output scores ~0 by design):
+# Plumbing self-test (no key; placeholder output scores ~0 by design; the run
+# now ESCALATES at implementation — Anvil's #21 contract validator correctly
+# refuses placeholder code against the emitted contract-manifest):
 python benchmarks/commit0/run_commit0.py run --repo tinydb --start-server --mode offline-llm
 
 # Real run:
@@ -32,24 +34,32 @@ the merged package, junit XML) for debugging.
 1. **fetch** — clone the stubbed skeleton: `github.com/commit-0/<repo>`,
    branch `commit0_combined` (cached under `skeletons/`).
 2. **prepare** — stage a disposable copy and generate:
-   - `domain-knowledge/background-information.md` — the task, with an
-     AST-extracted **stub inventory** (every unimplemented function's module
-     path, signature, docstring line) as the pinned contract, followed by
-     **spec excerpts from `docs/*.rst`** (~25k chars, behavioral files first:
-     usage/getting-started/api; changelogs and process docs skipped). The
-     repos also ship the same spec as `spec.pdf.bz2` — Anvil only ingests
-     text, so the adapter uses the `.rst` sources instead. Inventory comes
-     *before* docs so a low input cap truncates spec prose, never the
-     contract. The inventory also lists **dangling references** ("MUST ALSO
-     DEFINE") — names the skeleton uses whose definitions the Commit0
-     stripper deleted outright (e.g. tinydb's `_immutable`), which no stub
-     scan can see;
+   - `domain-knowledge/background-information.md` — the task, split by
+     Anvil's v0.1.3 contract markers. The **contract block**
+     (`<!-- anvil:contract -->`, injected verbatim into every phase prompt,
+     never truncated) carries the task rules, the AST-extracted **stub
+     inventory** (every unimplemented function's module path, signature,
+     docstring line — including **dangling references** ("MUST ALSO DEFINE"),
+     names the skeleton uses whose definitions the Commit0 stripper deleted
+     outright, e.g. tinydb's `_immutable`), and a machine-checkable
+     ```` ```contract-manifest ```` JSON (#21) that Anvil's validator
+     AST-checks the generated code against. The **context block**
+     (`<!-- anvil:context -->`, intake/proposal input only) carries the
+     readme and **spec excerpts from `docs/*.rst`** (~25k chars, behavioral
+     files first; the repos also ship `spec.pdf.bz2` — Anvil only ingests
+     text, so the `.rst` sources are used);
+   - `src/<module>.py` **pre-staged stubs** — every module needing work is
+     copied under `src/` so Anvil's skeleton-aware per-artifact
+     implementation (#22) reads exactly the file it is completing, and
+     generated files land on the same relative paths `apply` maps back;
    - `domain-knowledge/anvil-instructions.md` — fill-the-skeleton fidelity
      rules (the mechanism that took the smoke suite 50% → 100%).
 
-   `--start-server` raises `ANVIL_INPUT_CHAR_LIMIT` to 80000 for the spawned
-   server (the default 20k would truncate the task file). With `--base-url`,
-   set that env var on your own server before starting it.
+   `--start-server` raises `ANVIL_INPUT_CHAR_LIMIT` to 80000 and sets
+   `ANVIL_CONTRACT_MAX_CHARS=48000` for the spawned server (a library-scale
+   contract exceeds the 16k default, which fails intake loudly by design).
+   With `--base-url`, set those env vars on your own server before starting
+   it.
 3. **run** — task-less in-place Anvil run (`POST /v1/runs` with `workspace`
    only), driven phase-by-phase in yolo mode.
 4. **apply** — merge Anvil's generated `src/*.py` onto the package by

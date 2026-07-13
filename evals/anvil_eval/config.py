@@ -33,6 +33,11 @@ class EvalConfig:
     advance_timeout_s: float = DEFAULT_ADVANCE_TIMEOUT_S
     pytest_timeout_s: float = DEFAULT_PYTEST_TIMEOUT_S
     pricing: dict[str, float] = dataclasses.field(default_factory=dict)
+    # v0.1.3 acceptance condition: submit each task WITHOUT its per-task
+    # anvil-instructions.md (the runtime copies a sibling file automatically,
+    # so the prompt is staged alone). Proves #20's contract markers replace
+    # the per-task fidelity-instructions workaround.
+    task_instructions: bool = True
 
 
 def load_pricing(path: str | pathlib.Path) -> dict[str, float]:

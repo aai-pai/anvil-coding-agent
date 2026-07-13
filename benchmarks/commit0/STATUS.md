@@ -1,9 +1,22 @@
 # Commit0 × Anvil — status, findings, and future work
 
-*Last updated: 2026-07-11. This document is the handoff record of the Commit0
+*Last updated: 2026-07-12. This document is the handoff record of the Commit0
 testing/fixing arc: what was built, what each run found, what was fixed, and
 what comes next. Read alongside [README.md](README.md) (usage) and
 [evals/README.md](../../evals/README.md) (the Tier-1 harness this builds on).*
+
+> **2026-07-12 — v0.1.3 implemented.** #20 (contract/context split), #21
+> (mechanical contract validation), and #22 (skeleton-aware per-artifact
+> implementation) are now in Anvil core (343 tests green; see the
+> [implementation log](../../anvil-development/v0.1.3/docs/implementation-log.md)).
+> Adapter side: the staged task file is contract-markered, emits a
+> `contract-manifest`, and pre-stages work modules under `src/`; spawned
+> servers get `ANVIL_CONTRACT_MAX_CHARS=48000`. Two behavior changes to know:
+> the **offline plumbing run now escalates at implementation** (the #21
+> validator correctly refuses placeholder output against the manifest — that
+> escalation *is* the plumbing proof), and the real-run command below should
+> use label `v0.1.3`. The measurement itself is still blocked on
+> `OPENROUTER_API_KEY`.
 
 ## Positioning (agreed strategy)
 
@@ -57,12 +70,13 @@ failures were budget plumbing, contract transport, and skeleton-blindness.
 
 ## Immediate next step (blocked on OPENROUTER_API_KEY)
 
-One fresh real run now that the inventory demands `_immutable` and graft
-preserves the skeleton:
+One fresh real run now that the contract is pinned end-to-end (#20), checked
+mechanically (#21), and the implementation completes the pre-staged stubs
+per-file instead of regenerating blind (#22):
 
 ```powershell
 $env:OPENROUTER_API_KEY = "sk-or-..."
-python benchmarks/commit0/run_commit0.py run --repo tinydb --start-server --mode real --label v0.1.3-graft --baseline
+python benchmarks/commit0/run_commit0.py run --repo tinydb --start-server --mode real --label v0.1.3 --baseline
 ```
 
 Realistic outcomes: the package imports and we get the **first real pass
