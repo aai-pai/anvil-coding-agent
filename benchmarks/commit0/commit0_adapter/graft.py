@@ -136,8 +136,23 @@ def graft_module(skeleton_src: str, generated_src: str) -> tuple[str, dict]:
             insertions.append((target.end_lineno or target.lineno,
                                [""] + _reindent(body, span.node.col_offset, indent)))
         elif not parent and name in dangling:
-            insertions.append((len(skeleton_lines),
-                               [""] + _reindent(body, span.node.col_offset, 0)))
+            # Insert BEFORE the first top-level statement that references the
+            # name, not at end-of-file: a reference inside a class body (the
+            # observed tinydb case, `__setitem__ = _immutable` in FrozenDict)
+            # executes at import time, so a def appended after the class
+            # raises NameError before the module ever loads.
+            insert_after = len(skeleton_lines)
+            for stmt in merged_tree.body:
+                if any(isinstance(n, ast.Name) and n.id == name
+                       and isinstance(n.ctx, ast.Load) for n in ast.walk(stmt)):
+                    first_line = min([stmt.lineno]
+                                     + [d.lineno for d in
+                                        getattr(stmt, "decorator_list", [])])
+                    insert_after = first_line - 1
+                    break
+            insertions.append((insert_after,
+                               [""] + _reindent(body, span.node.col_offset, 0)
+                               + [""]))
     for after_line, lines in sorted(insertions, reverse=True):
         skeleton_lines[after_line:after_line] = lines
         stats["inserted"] += 1

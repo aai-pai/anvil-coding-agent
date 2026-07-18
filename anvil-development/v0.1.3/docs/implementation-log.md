@@ -76,11 +76,27 @@ What shipped, where it lives, and how it was verified. Requirements:
   (`changed signature: add in core.py — pinned 'def add(a, b) -> int',
   found 'def add(a)'`).
 
-## Measurement still owed (needs `OPENROUTER_API_KEY`)
+## Acceptance measurements — both complete
 
-Per the acceptance criteria — not run in this cycle:
+1. **Smoke suite, real mode, `--no-task-instructions` (2026-07-13): 6/6**
+   (28/28 held-out tests) — v0.1.2 scored 3/6 under this condition, so #20
+   fully replaces the per-task instructions workaround. Pinned facts now
+   survive into every derived doc (v0.1.2's spec dropped them). Cheaper and
+   faster than the workaround: 11,930 avg tokens/task (−30%) and 110.8s avg
+   wall (−50%) vs the v0.1.2-instructions run. All six runs emitted
+   `ContractSealed` and used per-artifact implementation on exactly the
+   pinned file. Results: `evals/results/20260713-000658-v0.1.3/`.
+2. **Commit0 tinydb, real mode (2026-07-18): 24/201 tests (11.9%)** — the
+   one-shot baseline #23 must beat. The run itself: 9 phases, 7/7 modules
+   generated per-artifact, 50/50 stub bodies grafted, the demanded
+   `_immutable` defined; the package **imports** (first time ever) after an
+   adapter graft fix (dangling defs must be inserted before their first
+   referencing statement, not at EOF — rescored offline on the same model
+   output). Failure triage and clusters: `benchmarks/commit0/STATUS.md`.
+   Results: `benchmarks/commit0/results/20260718-183517-v0.1.3/`.
 
-1. `evals/` smoke suite in real mode **without** per-task fidelity
-   instructions → must hold 6/6.
-2. Commit0 tinydb real run (`v0.1.3` label) → pass rate over 201 tests is
-   the one-shot baseline v0.1.4's repair loop (#23) must beat.
+Two adapter fixes landed during measurement (both consumer-side, no Anvil
+core changes): the per-advance client timeout now spans the whole per-repo
+budget (#22 made one advance a many-completion call), and the graft
+insertion-order fix above. The manifest also now pins MUST-ALSO-DEFINE names
+as existence-only symbols so #21 catches an undefined one mechanically.

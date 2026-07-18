@@ -64,26 +64,38 @@ apply+score = **201/201 tests** on tinydb; untouched skeleton = import-fail
 | `v0.1.2` (2026-07-11 02:13) | **escalated** at specification, 3× `finish_reason=length` | Output token budgets were hardcoded (400/1500/4000). → **#19, shipped in core**: config fields + `ANVIL_INTAKE/DOC/CODE_MAX_TOKENS` env overrides (mirrors #18); adapter spawns servers with doc 6000 / code 16000 / input 80k. 272 tests green. |
 | `v0.1.2` rerun with #19 (02:46) | **completed 9 phases**, 8 modules generated, 7 named correctly, 48/50 stub bodies present — but import-fail | Implementation regenerates whole files from plan docs (never reads skeleton) → dropped provided code (`QueryLike`, `FrozenDict`, `LRUCache`, `MemoryStorage`, `__all__`). → adapter **graft v2** (AST body transplant); rescoring the same run's saved output: 48 bodies grafted cleanly. |
 | graft rescore (offline, same output) | import-fail, one level deeper | Commit0's stripper sometimes deletes a whole definition leaving a dangling reference (`__setitem__ = _immutable`, `def _immutable` gone) — invisible to stub scans, so Anvil was never asked to write it. → inventory now emits **"MUST ALSO DEFINE"** via a pyflakes-lite pass (verified: flags `_immutable`). |
+| `v0.1.3` first attempt (2026-07-13 00:22) | client-side **timeout mid-implementation** (5 modules generated at ~70s each, run healthy) | #22 made one `/advance` a many-completion call; the adapter's 600s per-advance client timeout killed it. → adapter gives an advance the full per-repo budget (`--timeout`). |
+| **`v0.1.3` (2026-07-18 18:35)** | **completed 9 phases** (intake→qa), 7/7 modules generated per-artifact, **50/50 stub bodies grafted, 0 unmatched**, model defined `_immutable` as demanded, 153,848 tokens — but still import-fail | Graft bug, not a generation failure: missing module-level defs were inserted at **end-of-file**, and `__setitem__ = _immutable` executes in a *class body* at import time → NameError before the def. → graft fix: insert a dangling def **before its first referencing top-level statement**. Offline rescore of the same output: **package imports; 24/201 tests pass (11.9%)** — Anvil's first real Commit0 number. |
+
+**The v0.1.3 one-shot baseline is 24/201 (11.9%)** (rescore dir:
+`results/20260718-183517-v0.1.3/repos/tinydb-graftfix-rescore/`). Contract
+transport did its job — every module named correctly, every stub filled,
+every demanded definition present. The remaining 177 failures are
+implementation-*correctness* defects, i.e. exactly the class #23's repair
+loop (v0.1.4) exists to fix. Dominant clusters from the junit
+(`graftfix-junit.xml`):
+
+- 73× `TypeError: keys must be str… not TinyDB` (table registry / storage
+  serialization in `database.py` — one bug, 60 of these are fixture errors)
+- 60× `RecursionError` (query/middleware delegation cycle)
+- 16× `'str' object has no attribute 'read'` (storage file-handle handling)
+- 10× `LRUCache` attribute contract (`.lru` / `.length`)
+
+Four root causes likely account for ~160 of the 177 red tests — a strong
+setup for measuring #23's delta.
 
 Pattern across all three: **Anvil's code generation was never the problem** —
 failures were budget plumbing, contract transport, and skeleton-blindness.
 
-## Immediate next step (blocked on OPENROUTER_API_KEY)
+## Immediate next step
 
-One fresh real run now that the contract is pinned end-to-end (#20), checked
-mechanically (#21), and the implementation completes the pre-staged stubs
-per-file instead of regenerating blind (#22):
-
-```powershell
-$env:OPENROUTER_API_KEY = "sk-or-..."
-python benchmarks/commit0/run_commit0.py run --repo tinydb --start-server --mode real --label v0.1.3 --baseline
-```
-
-Realistic outcomes: the package imports and we get the **first real pass
-rate** over 201 tests; or a next-layer import error appears (triage via the
-`output_tail` in results.json + `logs/events.jsonl` in the staged repo).
-The honest-adapter budget is now spent — whatever this scores, remaining
-gaps are core work.
+~~One fresh real run~~ **Done (2026-07-18): 24/201 (11.9%), see the run log
+above.** Both v0.1.3 acceptance measurements are complete (smoke 6/6 without
+instructions; tinydb one-shot baseline recorded). Next measurement is
+v0.1.4's: the #23 repair loop's delta over 11.9%, plus a re-run with the
+fixed graft in the loop (a fresh real run should now import without the
+rescore step). The honest-adapter budget is spent — remaining gaps are core
+work.
 
 ## Future work
 
@@ -117,6 +129,12 @@ gaps are core work.
   explicit v0.1.3 design decision.
 
 ### Adapter/harness backlog (small)
+- The per-artifact implementation phase (#22) makes one `/advance` a
+  many-completion call (~70s/module observed on tinydb). The adapter now
+  gives an advance the full per-repo budget (fixed 2026-07-13 after the
+  first v0.1.3 run timed out mid-implementation at the client's old 600s
+  cap); the *runtime-side* fix — advancing per artifact or reporting
+  progress over SSE so clients keep a short timeout — is a v0.1.4 candidate.
 - Scoring should run only the repo's *original* test files (snapshot the
   `tests/` list at staging) so Anvil's own qa-generated tests can't leak into
   the score.

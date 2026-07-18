@@ -154,6 +154,11 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     cfg = EvalConfig(run_mode="yolo", task_timeout_s=args.timeout)
+    # #22 made the implementation phase per-artifact: ONE /advance call now
+    # runs ~a completion per module (observed ~70s each on tinydb), so the
+    # default 600s per-advance client timeout kills library-scale runs
+    # mid-phase. Let a single advance use the whole per-repo budget.
+    cfg.advance_timeout_s = args.timeout
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     results_dir = RESULTS_ROOT / (f"{stamp}-{args.label}" if args.label else stamp)
     results_dir.mkdir(parents=True, exist_ok=True)

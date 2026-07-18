@@ -204,6 +204,15 @@ def render_manifest(entries: list[StubEntry],
         {"qualname": e.qualname, "signature": e.signature, "file": e.module}
         for e in entries if e.is_stub
     ]
+    # Dangling references (MUST ALSO DEFINE) are pinned existence-only: the
+    # skeleton lost their definitions outright, so there is no signature to
+    # pin, but a module that fails to define them cannot import — Anvil's
+    # #21 validator must catch that mechanically, not the test run.
+    pinned = {(s["qualname"], s["file"]) for s in symbols}
+    for module, names in missing_by_module.items():
+        for name in names:
+            if (name, module) not in pinned:
+                symbols.append({"qualname": name, "file": module})
     return json.dumps({"files": files, "symbols": symbols}, indent=2)
 
 
