@@ -1,2 +1,2 @@
-# openhands_based_coding_team
-This is a repository to develop an OpenHands based coding team
+# anvil-coding-agent
+This is a repository to develop an OpenHands based coding agent
