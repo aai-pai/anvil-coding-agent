@@ -27,6 +27,10 @@ class CompletionRequest(BaseModel):
     phase: str | None = None
     subtask: str | None = None
     max_tokens: int | None = None
+    # v0.1.3 follow-up: pinned sampling temperature. None (default) sends no
+    # temperature and keeps the provider's default sampling — the pre-knob
+    # behavior, byte-for-byte.
+    temperature: float | None = None
 
 
 class CompletionResponse(BaseModel):
@@ -95,6 +99,8 @@ class HttpxTransport:
         }
         if request.max_tokens is not None:
             payload["max_tokens"] = request.max_tokens
+        if request.temperature is not None:
+            payload["temperature"] = request.temperature
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",

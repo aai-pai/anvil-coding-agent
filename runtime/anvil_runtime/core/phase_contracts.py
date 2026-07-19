@@ -190,6 +190,10 @@ class PhaseCompleteEvent(BaseModel):
     # (interactive round 1) or recorded assumptions; other phases leave them empty.
     questions: list[str] = Field(default_factory=list)
     assumptions: list[str] = Field(default_factory=list)
+    # v0.1.4 #24 (FR-AG-002): False marks a successful *unit* of a phase
+    # still in progress (one artifact / one repair round); the supervisor
+    # records progress and re-dispatches instead of completing the phase.
+    phase_complete: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -233,6 +237,10 @@ class RunState(BaseModel):
     # (ContractSealed) and later writes are rejected; a resume must rehydrate
     # the seal or a restarted run could mutate binding facts mid-pipeline.
     contract_sealed: bool = False
+    # v0.1.4 #24 (FR-AG-003): mid-phase progress — phase id -> artifacts
+    # already generated — so a restart resumes from the last completed
+    # artifact instead of regenerating the phase from scratch.
+    phase_progress: dict[str, list[str]] = Field(default_factory=dict)
 
 
 __all__ = [

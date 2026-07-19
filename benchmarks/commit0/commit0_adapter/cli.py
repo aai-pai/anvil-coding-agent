@@ -50,7 +50,8 @@ def run_one(client: AnvilClient, repo: str, results_dir: pathlib.Path,
 
         if baseline:
             base = run_repo_tests(stage_dir, timeout_s=test_timeout_s,
-                                  junit_name="baseline-junit.xml")
+                                  junit_name="baseline-junit.xml",
+                                  package_dir=pathlib.Path(info["package_dir"]))
             result["baseline"] = {k: base[k] for k in
                                   ("total", "passed_count", "pass_rate")}
             log(f"    skeleton baseline: {base['passed_count']}/{base['total']}")
@@ -80,7 +81,8 @@ def run_one(client: AnvilClient, repo: str, results_dir: pathlib.Path,
         log(f"    grafted {merged['grafted_bodies']} stub bodies from "
             f"{merged['applied']}/{merged['generated_py_files']} generated modules")
 
-        tests = run_repo_tests(stage_dir, timeout_s=test_timeout_s)
+        tests = run_repo_tests(stage_dir, timeout_s=test_timeout_s,
+                               package_dir=pathlib.Path(info["package_dir"]))
         result["tests"] = {k: tests.get(k) for k in
                            ("total", "passed_count", "failures", "errors",
                             "skipped", "pass_rate", "exit_code",

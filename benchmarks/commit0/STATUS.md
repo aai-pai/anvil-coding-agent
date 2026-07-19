@@ -67,13 +67,37 @@ apply+score = **201/201 tests** on tinydb; untouched skeleton = import-fail
 | `v0.1.3` first attempt (2026-07-13 00:22) | client-side **timeout mid-implementation** (5 modules generated at ~70s each, run healthy) | #22 made one `/advance` a many-completion call; the adapter's 600s per-advance client timeout killed it. → adapter gives an advance the full per-repo budget (`--timeout`). |
 | **`v0.1.3` (2026-07-18 18:35)** | **completed 9 phases** (intake→qa), 7/7 modules generated per-artifact, **50/50 stub bodies grafted, 0 unmatched**, model defined `_immutable` as demanded, 153,848 tokens — but still import-fail | Graft bug, not a generation failure: missing module-level defs were inserted at **end-of-file**, and `__setitem__ = _immutable` executes in a *class body* at import time → NameError before the def. → graft fix: insert a dangling def **before its first referencing top-level statement**. Offline rescore of the same output: **package imports; 24/201 tests pass (11.9%)** — Anvil's first real Commit0 number. |
 
-**The v0.1.3 one-shot baseline is 24/201 (11.9%)** (rescore dir:
-`results/20260718-183517-v0.1.3/repos/tinydb-graftfix-rescore/`). Contract
-transport did its job — every module named correctly, every stub filled,
-every demanded definition present. The remaining 177 failures are
+| `v0.1.3-validation` tinydb (2026-07-18 21:12) | **imports end-to-end, 78/201 (38.8%)** — first run to produce a pass rate with no rescore step | Confirms the graft fix in the loop. Also calibrates one-shot variance: two independent v0.1.3 runs scored 24/201 and 78/201 — same pipeline, different generations. |
+| `v0.1.3-validation` cachetools (2026-07-18 21:12) | reported 0/2 "import-fail" — but the harness had scored the INSTALLED site-packages cachetools, not the staged repo | cachetools is a **src-layout** repo (`src/cachetools/`): `score.py` put only the stage root on `PYTHONPATH`, so `import cachetools` resolved to anaconda's 5.3.3; `apply.py` also swept the in-src package as "generated" and grafted it onto itself. → both fixed (importable root = package parent dir; package-internal files excluded from apply). Offline rescore of the same output: **177/215 (82.3%)** — all 10 stubs in 2 modules generated and grafted cleanly; failures are one `func.py` decorator-attribute cluster (~37) + one `typedmethodkey` assertion. |
+
+**Temperature experiment (2026-07-18, 3× tinydb at `ANVIL_TEMPERATURE=0`,
+labels `v0.1.3-temp0-r1..r3`):** scores 0 (import-fail), 0 (import-fail),
+40/201 — pinning temperature 0 does **not** make runs converge and does not
+help the mean. Generated modules still differ per run (5/7 files unique MD5s
+across the three runs — OpenRouter/DeepSeek is not deterministic at temp 0:
+provider routing + batched inference). The revealing part: r1 and r2
+independently picked the *same wrong implementation idea* for the same
+load-bearing function (`with_typehint` built as a decorator factory instead
+of returning a `baseclass` subclass), and that single function killed both
+runs at import (`class TinyDB(TableBase)` → TypeError). Full 5-run one-shot
+picture on tinydb: **0, 0, 24, 40, 78 of 201** — a few make-or-break
+functions dominate the outcome, catastrophic import failure is a real arm of
+the distribution (2/5), and the fix is verification/repair (#23: even a
+bare import-smoke check would have caught r1/r2), not sampler settings. The
+`ANVIL_TEMPERATURE` knob stays (useful for controlled experiments) but is
+not a measurement-variance remedy.
+
+**v0.1.3 one-shot BASELINE (n=5, default temperature, 2026-07-18; labels
+`v0.1.3`, `v0.1.3-validation`, `v0.1.3-default-r3..r5`): tinydb
+{0, 19, 24, 60, 78} of 201 — median 24 (11.9%), import-fail 1/5.
+cachetools 177/215 (82.3%).** This is the distribution v0.1.4's repair loop
+(#23) must beat on the median AND tighten (delete the import-fail arm). Contract
+transport did its job in every run — modules named correctly, every stub
+filled, every demanded definition present. The remaining failures are
 implementation-*correctness* defects, i.e. exactly the class #23's repair
-loop (v0.1.4) exists to fix. Dominant clusters from the junit
-(`graftfix-junit.xml`):
+loop (v0.1.4) exists to fix — and the tinydb variance itself is an argument
+for #23, which converts "unlucky generation" into "one more repair round".
+Dominant clusters from the first tinydb run's junit (`graftfix-junit.xml`):
 
 - 73× `TypeError: keys must be str… not TinyDB` (table registry / storage
   serialization in `database.py` — one bug, 60 of these are fixture errors)

@@ -37,6 +37,11 @@ DEFAULT_CODE_MAX_TOKENS = 4_000
 # instead (a clipped contract is worse than none). Env override
 # ANVIL_CONTRACT_MAX_CHARS.
 DEFAULT_CONTRACT_MAX_CHARS = 16_000
+# v0.1.4 #23: bounded external-test repair loop. No command configured means
+# no execution ever (v0.1.3 behavior byte-for-byte). Env overrides
+# ANVIL_TEST_COMMAND / ANVIL_REPAIR_MAX_ROUNDS / ANVIL_TEST_TIMEOUT_S.
+DEFAULT_REPAIR_MAX_ROUNDS = 2
+DEFAULT_TEST_TIMEOUT_S = 600
 DEFAULT_MCP_DISCOVERY_TIMEOUT_SECONDS = 5
 DEFAULT_ARTIFACT_VALIDATION_TIMEOUT_SECONDS = 30
 DEFAULT_DRIFT_CHECK_TIMEOUT_SECONDS = 60
@@ -94,6 +99,16 @@ class EffectiveConfig(BaseModel):
     codeMaxTokens: int = DEFAULT_CODE_MAX_TOKENS
     # v0.1.3 #20: never-truncate cap for the task-contract block.
     contractMaxChars: int = DEFAULT_CONTRACT_MAX_CHARS
+    # Pinned sampling temperature for all completions (env ANVIL_TEMPERATURE).
+    # None sends no temperature: the provider default, the historical
+    # behavior. Pin low (e.g. 0) for reproducible measurement runs.
+    temperature: float | None = None
+    # v0.1.4 #23 (FR-RL-001): user-supplied verification command, run in the
+    # run workspace after implementation; failures drive bounded per-artifact
+    # repair. None -> the loop does not exist for this run.
+    externalTestCommand: str | None = None
+    repairMaxRounds: int = DEFAULT_REPAIR_MAX_ROUNDS
+    testTimeoutS: int = DEFAULT_TEST_TIMEOUT_S
 
 
 __all__ = [

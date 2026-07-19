@@ -129,9 +129,13 @@ class ClarificationDecision(BaseModel):
 class _RunContext:
     """In-memory orchestration state for a single run."""
 
-    def __init__(self, run_id: str, mode: str) -> None:
+    def __init__(self, run_id: str, mode: str, security_profile: str = "restricted") -> None:
         self.run_id = run_id
         self.mode = mode
+        # #23 (FR-RL-003): the RUN's profile decides whether a configured
+        # externalTestCommand may execute; the backend receives it per
+        # dispatch (the manager-level config profile is only a fallback).
+        self.security_profile = security_profile
         self.status: RunStatus = "running"
         self.completed: set[str] = set()
         self.approved_gates: set[str] = set()
@@ -145,6 +149,8 @@ class _RunContext:
         self.pending_questions: list[str] = []
         # #20: True once the task-contract block is sealed (post-intake).
         self.contract_sealed: bool = False
+        # #24: mid-phase unit progress (phase id -> generated artifacts).
+        self.phase_progress: dict[str, list[str]] = {}
 
 
 def _locked(method: Callable) -> Callable:
@@ -220,7 +226,7 @@ class DevelopmentManager:
 
     def start_run(self, request: RunStartRequest) -> RunStarted:
         run_id = uuid.uuid4().hex
-        ctx = _RunContext(run_id, request.mode)
+        ctx = _RunContext(run_id, request.mode, request.security_profile)
         ctx.pre_gates, ctx.post_gates = self._gate_maps(request)
         self._runs[run_id] = ctx
         self._checkpoints.initialize_run(run_id, request.mode)
@@ -274,13 +280,25 @@ class DevelopmentManager:
                 detail="prerequisite phases incomplete",
             )
         contract = self._registry.get(phase_id)
-        phase_context: dict[str, object] = {"run_id": run_id}
+        phase_context: dict[str, object] = {
+            "run_id": run_id,
+            "security_profile": ctx.security_profile,
+        }
         if phase_id == "intake":
             # #15: tells the intake execution path whether it may ask (round 1,
             # interactive) or must record assumptions instead (yolo / final round).
             phase_context["clarification_mode"] = self._clarification_mode(ctx)
+        if phase_id == "implementation":
+            # #24 (FR-AG-002/003): drive per-artifact units; already-generated
+            # artifacts (checkpointed) are never regenerated on re-dispatch,
+            # retry, or resume.
+            phase_context["unit_mode"] = True
+            phase_context["completed_artifacts"] = list(
+                ctx.phase_progress.get(phase_id, []))
         payload = build_invocation_payload(contract, phase_context=phase_context)
-        self._emit(run_id, "PhaseStarted", phase_id)
+        # A phase mid-unit-progress was already started; don't re-announce it.
+        if not ctx.phase_progress.get(phase_id):
+            self._emit(run_id, "PhaseStarted", phase_id)
         agent = self._factory.create(phase_id)
         attempt = self._retries.attempts(run_id, phase_id) + 1
         # An executor crash (LLM/network/IO error) must enter the same
@@ -292,6 +310,15 @@ class DevelopmentManager:
             event = self._failure_event(phase_id, exc)
         if event.status != "success":
             return self._handle_failure(ctx, phase_id, event, attempt)
+        # #24 (FR-AG-002): a successful unit of an in-progress phase records
+        # progress and returns — no post-phase gates (they judge the finished
+        # artifact set), no completion checkpoint, no PhaseCompleted.
+        if not event.phase_complete:
+            self._record_unit(ctx, phase_id, event)
+            return PhaseDispatchResult(
+                run_id=run_id, phase=phase_id, status="success",
+                attempt=attempt, complete_event=event,
+            )
         # Post-phase gates: artifact validation (FR-SV-009) then drift (FR-SV-010).
         try:
             gate_failure = self._post_phase_checks(ctx, phase_id, event)
@@ -371,6 +398,26 @@ class DevelopmentManager:
             attempt=count, complete_event=event, detail="retry budget exhausted",
         )
 
+    def _record_unit(self, ctx: _RunContext, phase_id: str, event: PhaseCompleteEvent) -> None:
+        """Checkpoint one completed unit of an in-progress phase (#24).
+
+        Progress must be durable (FR-AG-003): a restart resumes from the last
+        completed artifact, and a phase retry regenerates only what is not
+        already on disk.
+        """
+        progress = ctx.phase_progress.setdefault(phase_id, [])
+        for rel in event.artifact_paths:
+            if rel not in progress:
+                progress.append(rel)
+        self._checkpoints.save_run_meta(
+            ctx.run_id,
+            phase_progress={k: list(v) for k, v in ctx.phase_progress.items()},
+        )
+        self._emit(ctx.run_id, "PhaseUnitCompleted", phase_id, data={
+            "artifacts": list(event.artifact_paths),
+            "completed_units": len(progress),
+        })
+
     def _record_success(self, ctx: _RunContext, phase_id: str, event: PhaseCompleteEvent) -> None:
         checksums = self._compute_artifact_checksums(event.artifact_paths)
         self._checkpoints.save_phase_completion(
@@ -383,6 +430,12 @@ class DevelopmentManager:
         )
         ctx.completed.add(phase_id)
         self._retries.reset(ctx.run_id, phase_id)
+        # #24: a finished phase's unit progress has served its purpose.
+        if ctx.phase_progress.pop(phase_id, None) is not None:
+            self._checkpoints.save_run_meta(
+                ctx.run_id,
+                phase_progress={k: list(v) for k, v in ctx.phase_progress.items()},
+            )
         self._summary.write_phase_summary(ctx.run_id, event)
         self._emit(ctx.run_id, "PhaseCompleted", phase_id, data={
             "artifact_paths": event.artifact_paths,
@@ -726,6 +779,12 @@ class DevelopmentManager:
         ctx.completed -= set(affected)
         for phase in affected:
             self._retries.reset(run_id, phase)
+        # #24: a rolled-back phase restarts from artifact zero.
+        if any(ctx.phase_progress.pop(phase, None) is not None for phase in affected):
+            self._checkpoints.save_run_meta(
+                run_id,
+                phase_progress={k: list(v) for k, v in ctx.phase_progress.items()},
+            )
         self._emit(run_id, "Rollback", target_phase, severity="warning", data={
             "reason": reason, "invalidated": affected,
         })
@@ -752,6 +811,8 @@ class DevelopmentManager:
         ctx.clarification_round = state.clarification_round
         # #20: a sealed contract stays sealed across restarts.
         ctx.contract_sealed = state.contract_sealed
+        # #24 (FR-AG-003): mid-phase unit progress survives a restart.
+        ctx.phase_progress = {k: list(v) for k, v in state.phase_progress.items()}
         # A pause that was active at shutdown is restored, not skipped: a
         # post-gate is only ever checked in the step that completed its phase.
         if state.pending_gate and not self._gate_satisfied(ctx, state.pending_gate):

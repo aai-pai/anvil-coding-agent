@@ -51,6 +51,9 @@ class StepResult(BaseModel):
     # #15: set by the intake phase only (clarifying questions / recorded assumptions).
     questions: list[str] = Field(default_factory=list)
     assumptions: list[str] = Field(default_factory=list)
+    # v0.1.4 #24 (FR-AG-002): False marks one successful unit of a phase
+    # still in progress; the supervisor re-dispatches for the next unit.
+    phase_complete: bool = True
 
 
 @runtime_checkable
@@ -120,6 +123,10 @@ class LLMBackend:
         doc_max_tokens: int | None = None,
         code_max_tokens: int | None = None,
         contract_max_chars: int | None = None,
+        temperature: float | None = None,
+        external_test_command: str | None = None,
+        repair_max_rounds: int | None = None,
+        test_timeout_s: int | None = None,
     ) -> None:
         from anvil_runtime.config.schema import (
             DEFAULT_CODE_MAX_TOKENS,
@@ -127,6 +134,8 @@ class LLMBackend:
             DEFAULT_DOC_MAX_TOKENS,
             DEFAULT_INPUT_CHAR_LIMIT,
             DEFAULT_INTAKE_MAX_TOKENS,
+            DEFAULT_REPAIR_MAX_ROUNDS,
+            DEFAULT_TEST_TIMEOUT_S,
         )
 
         self._provider = provider
@@ -145,6 +154,17 @@ class LLMBackend:
         # v0.1.3 #20: the task-contract block is injected verbatim (never
         # truncated); an over-cap contract fails the run at intake instead.
         self._contract_max_chars = contract_max_chars or DEFAULT_CONTRACT_MAX_CHARS
+        # Pinned sampling temperature for every completion; None keeps the
+        # provider default (ANVIL_TEMPERATURE / config `temperature`).
+        self._temperature = temperature
+        # v0.1.4 #23 (FR-RL-001/002): the repair loop exists only when a
+        # command is configured; None keeps v0.1.3 behavior byte-for-byte.
+        self._test_command = external_test_command
+        self._repair_max_rounds = (
+            repair_max_rounds if repair_max_rounds is not None
+            else DEFAULT_REPAIR_MAX_ROUNDS
+        )
+        self._test_timeout_s = test_timeout_s or DEFAULT_TEST_TIMEOUT_S
         self._events = event_bus
         # #14 (FR-INS-002/003): standing instructions, injected as a dedicated
         # block in every prompt; resolved (and capped) upstream, never truncated
@@ -203,6 +223,23 @@ class LLMBackend:
     def _run_intake(self, session_id: str, step: PhaseStep, model: str) -> StepResult:
         from anvil_runtime.llm.openrouter_provider import CompletionRequest
 
+        # #23 (FR-RL-003): executing workspace code is an `open`-profile
+        # capability. A configured command under any other profile fails the
+        # run AT INTAKE — silently skipping verification the user asked for
+        # would be worse than refusing loudly.
+        cfg = self._sessions.get(session_id)
+        # The RUN's profile (phase context) is authoritative; the session
+        # config carries the manager-level fallback.
+        profile = str(step.context.get("security_profile") or "") or (
+            cfg.security_profile if cfg else "restricted")
+        if self._test_command and profile != "open":
+            return self._failed_step(
+                session_id, step,
+                f"externalTestCommand is configured ({self._test_command!r}) "
+                f"but security profile '{profile}' does not permit executing "
+                "workspace code; use profile 'open' or remove the command",
+                usage={},
+            )
         # #20: an over-cap contract fails the run AT INTAKE with a clear
         # reason — the block is exempt from the input limit and must never be
         # clipped (a clipped contract is worse than none).
@@ -222,6 +259,7 @@ class LLMBackend:
             model=model, prompt=self._intake_prompt(step, mode),
             phase=step.phase, subtask=step.subtask,
             max_tokens=self._intake_max_tokens,
+            temperature=self._temperature,
         ))
         reason = self._response_failure(response)
         if reason:
@@ -307,6 +345,7 @@ class LLMBackend:
             model=model, prompt=self._doc_prompt(step),
             phase=step.phase, subtask=step.subtask,
             max_tokens=self._doc_max_tokens,
+            temperature=self._temperature,
         ))
         reason = self._response_failure(response)
         if reason:
@@ -363,9 +402,63 @@ class LLMBackend:
         preserved exactly.
         """
         targets = self._code_targets(step)
+        # v0.1.4 #24 (FR-AG-002): when the supervisor drives unit mode, one
+        # call performs one artifact (or the final verification unit).
+        if targets and step.context.get("unit_mode"):
+            return self._run_code_unit(session_id, step, model, targets)
         if not targets:
-            return self._run_code_single(session_id, step, model)
-        return self._run_code_per_file(session_id, step, model, targets)
+            result = self._run_code_single(session_id, step, model)
+        else:
+            result = self._run_code_per_file(session_id, step, model, targets)
+        # v0.1.4 #23: with a configured command, generation is followed by
+        # verification-by-execution + bounded repair. No command -> the
+        # result above is final (v0.1.3 behavior, FR-RL-002).
+        if result.status != "success" or not self._test_command:
+            return result
+        return self._verify_and_repair(session_id, step, model, result)
+
+    def _run_code_unit(
+        self, session_id: str, step: PhaseStep, model: str, targets: list[str]
+    ) -> StepResult:
+        """One unit of implementation work (#24): the next ungenerated
+        artifact, or — once all exist — the whole verification/repair pass.
+
+        Completed artifacts arrive via ``step.context["completed_artifacts"]``
+        (supervisor-checkpointed, FR-AG-003), so a retry or restart never
+        regenerates what is already on disk.
+        """
+        done = {str(rel) for rel in step.context.get("completed_artifacts") or []}
+        remaining = [rel for rel in targets if rel not in done]
+        if remaining:
+            rel = remaining[0]
+            total = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+            self._emit_progress(step, rel, targets.index(rel), len(targets), "generate")
+            reason = self._generate_one(step, model, rel, targets, total)
+            if reason is not None:
+                return self._failed_step(session_id, step, reason, total)
+            last = len(remaining) == 1
+            if last and not self._test_command:
+                # Phase finishes with this unit; report the full artifact set
+                # so checkpoint checksums cover every generated file.
+                return StepResult(
+                    session_id=session_id, phase=step.phase, status="success",
+                    output=f"generated {len(targets)} files", artifacts=list(targets),
+                    usage=total,
+                )
+            return StepResult(
+                session_id=session_id, phase=step.phase, status="success",
+                output=f"generated {rel}", artifacts=[rel], usage=total,
+                phase_complete=False,
+            )
+        # All artifacts exist -> the final unit is verification (+ repair).
+        base = StepResult(
+            session_id=session_id, phase=step.phase, status="success",
+            output=f"generated {len(targets)} files", artifacts=list(targets),
+            usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        )
+        if not self._test_command:
+            return base
+        return self._verify_and_repair(session_id, step, model, base)
 
     def _run_code_single(self, session_id: str, step: PhaseStep, model: str) -> StepResult:
         from anvil_runtime.llm.openrouter_provider import CompletionRequest
@@ -374,6 +467,7 @@ class LLMBackend:
             model=model, prompt=self._code_prompt(step),
             phase=step.phase, subtask=step.subtask,
             max_tokens=self._code_max_tokens,
+            temperature=self._temperature,
         ))
         reason = self._response_failure(response)
         if reason:
@@ -434,43 +528,56 @@ class LLMBackend:
     def _run_code_per_file(
         self, session_id: str, step: PhaseStep, model: str, targets: list[str]
     ) -> StepResult:
-        from anvil_runtime.llm.openrouter_provider import CompletionRequest
-
         total = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         written: list[str] = []
-        for rel in targets:
-            reason: str | None = None
-            response = None
-            for _attempt in range(self.PER_FILE_ATTEMPTS):
-                response = self._provider.complete(CompletionRequest(
-                    model=model, prompt=self._file_prompt(step, rel, targets),
-                    phase=step.phase, subtask=step.subtask,
-                    max_tokens=self._code_max_tokens,
-                ))
-                for key in total:
-                    total[key] += int(response.usage.get(key, 0))
-                reason = self._response_failure(response)
-                if reason is None:
-                    break
+        for position, rel in enumerate(targets):
+            self._emit_progress(step, rel, position, len(targets), "generate")
+            reason = self._generate_one(step, model, rel, targets, total)
             if reason is not None:
                 # Partial output stays on disk: a phase retry regenerates it,
                 # and the failure names the offending file for the record.
-                return self._failed_step(
-                    session_id, step, f"{rel}: {reason}", total
-                )
-            target = self._root / rel
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(self._strip_fences(response.content), encoding="utf-8")
+                return self._failed_step(session_id, step, reason, total)
             written.append(rel)
-            # #22: per-file usage on the existing event type, tagged with the
-            # artifact; the SessionBridge still reports the phase aggregate.
-            self._emit_artifact_usage(step, rel, dict(response.usage))
         return StepResult(
             session_id=session_id, phase=step.phase, status="success",
             output=f"generated {len(written)} files: " + ", ".join(written[:8]),
             artifacts=written,
             usage=total,
         )
+
+    def _generate_one(
+        self, step: PhaseStep, model: str, rel: str, targets: list[str],
+        total: dict[str, int],
+    ) -> str | None:
+        """Generate one target file (bounded in-step retry); None on success.
+
+        Shared by whole-phase per-file generation (#22) and unit-mode
+        advancement (#24). Usage accumulates into ``total``; per-file usage
+        is reported on the artifact-tagged event (FR-PA-004).
+        """
+        from anvil_runtime.llm.openrouter_provider import CompletionRequest
+
+        reason: str | None = None
+        response = None
+        for _attempt in range(self.PER_FILE_ATTEMPTS):
+            response = self._provider.complete(CompletionRequest(
+                model=model, prompt=self._file_prompt(step, rel, targets),
+                phase=step.phase, subtask=step.subtask,
+                max_tokens=self._code_max_tokens,
+                temperature=self._temperature,
+            ))
+            for key in total:
+                total[key] += int(response.usage.get(key, 0))
+            reason = self._response_failure(response)
+            if reason is None:
+                break
+        if reason is not None:
+            return f"{rel}: {reason}"
+        target = self._root / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(self._strip_fences(response.content), encoding="utf-8")
+        self._emit_artifact_usage(step, rel, dict(response.usage))
+        return None
 
     def _file_prompt(self, step: PhaseStep, rel: str, targets: list[str]) -> str:
         ctx = self._read_inputs(step)
@@ -537,6 +644,180 @@ class LLMBackend:
             phase=step.phase, severity="info",
             data={"artifact": rel, **usage},
         ))
+
+    def _emit_backend_event(
+        self, step: PhaseStep, event_type: str, data: dict, severity: str = "info"
+    ) -> None:
+        if self._events is None:
+            return
+        from anvil_runtime.core.phase_contracts import EventEnvelope
+
+        self._events.emit(EventEnvelope(
+            timestamp=self._clock(), eventType=event_type,
+            runId=str(step.context.get("run_id", "") or ""),
+            phase=step.phase, severity=severity, data=data,
+        ))
+
+    # -- external-test repair loop (v0.1.4 #23) ---------------------------
+
+    def _verify_and_repair(
+        self, session_id: str, step: PhaseStep, model: str, result: StepResult
+    ) -> StepResult:
+        """Run the configured command; feed failures into bounded repair.
+
+        FR-RL-005..011. The result's artifacts/usage are carried forward and
+        extended by repair completions; rounds exhausted with red tests fail
+        the step into the normal retry path with the last output tail.
+        """
+        from anvil_runtime.verify import (
+            EVENT_TAIL_CHARS,
+            compile_smoke,
+            implicated_files,
+            run_external_tests,
+        )
+
+        artifacts = list(result.artifacts)
+        total = dict(result.usage)
+
+        # Round zero (FR-RL-005): syntax-broken artifacts are repaired before
+        # spending a command run — the cheapest failure class of all.
+        broken = compile_smoke(self._root, artifacts)
+        if broken:
+            files = [rel for rel, _ in broken]
+            tail = "\n".join(f"{rel}: {err}" for rel, err in broken)
+            self._emit_backend_event(step, "RepairRoundStarted", {
+                "round": 0, "stage": "compile", "implicated": files,
+            }, severity="warning")
+            failure = self._repair_files(step, model, files, artifacts, tail, total)
+            if failure is not None:
+                return self._failed_step(session_id, step, failure, total)
+            self._emit_backend_event(step, "RepairRoundCompleted", {
+                "round": 0, "stage": "compile", "repaired": files,
+            })
+
+        run = run_external_tests(self._test_command, self._root, self._test_timeout_s)
+        self._emit_test_outcome(step, run, EVENT_TAIL_CHARS)
+        rounds = 0
+        while not run.passed and rounds < self._repair_max_rounds:
+            rounds += 1
+            implicated = implicated_files(run.output_tail, artifacts) or list(artifacts)
+            self._emit_backend_event(step, "RepairRoundStarted", {
+                "round": rounds, "stage": "repair", "implicated": implicated,
+            }, severity="warning")
+            failure = self._repair_files(
+                step, model, implicated, artifacts, run.output_tail, total
+            )
+            if failure is not None:
+                return self._failed_step(session_id, step, failure, total)
+            # FR-RL-009: the contract outranks the tests — a repair that
+            # un-pins a manifest symbol is treated as a still-red round.
+            violations = self._manifest_violations()
+            if violations:
+                run = run.model_copy(update={
+                    "exit_code": 1,
+                    "output_tail": "contract violations introduced by repair: "
+                                   + "; ".join(violations),
+                })
+            else:
+                run = run_external_tests(
+                    self._test_command, self._root, self._test_timeout_s
+                )
+            self._emit_backend_event(step, "RepairRoundCompleted", {
+                "round": rounds, "exit_code": run.exit_code,
+                "passed": run.passed,
+            })
+            self._emit_test_outcome(step, run, EVENT_TAIL_CHARS)
+        if not run.passed:
+            return self._failed_step(
+                session_id, step,
+                f"external tests still failing after {rounds} repair round(s) "
+                f"(exit {run.exit_code}): {run.output_tail[-800:]}",
+                total,
+            )
+        return StepResult(
+            session_id=session_id, phase=step.phase, status="success",
+            output=f"external tests passed after {rounds} repair round(s)",
+            artifacts=artifacts, usage=total,
+        )
+
+    def _emit_test_outcome(self, step: PhaseStep, run, tail_chars: int) -> None:  # noqa: ANN001
+        self._emit_backend_event(
+            step,
+            "ExternalTestsPassed" if run.passed else "ExternalTestsFailed",
+            {"exit_code": run.exit_code, "timed_out": run.timed_out,
+             "output_tail": run.output_tail[-tail_chars:]},
+            severity="info" if run.passed else "warning",
+        )
+
+    def _repair_files(
+        self, step: PhaseStep, model: str, files: list[str],
+        artifacts: list[str], failure_tail: str, total: dict[str, int],
+    ) -> str | None:
+        """One repair completion per implicated file; returns a failure reason
+        or None. Non-implicated files are never touched (FR-RL-008); with no
+        per-file targets the whole-src fallback regenerates in one completion
+        (FR-RL-011)."""
+        from anvil_runtime.llm.openrouter_provider import CompletionRequest
+
+        for index, rel in enumerate(files):
+            self._emit_progress(step, rel, index, len(files), "repair")
+            response = self._provider.complete(CompletionRequest(
+                model=model, prompt=self._repair_prompt(step, rel, failure_tail),
+                phase=step.phase, subtask=step.subtask,
+                max_tokens=self._code_max_tokens,
+                temperature=self._temperature,
+            ))
+            for key in total:
+                total[key] += int(response.usage.get(key, 0))
+            reason = self._response_failure(response)
+            if reason is not None:
+                return f"repair of {rel}: {reason}"
+            target = self._root / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(self._strip_fences(response.content), encoding="utf-8")
+            self._emit_artifact_usage(step, rel, dict(response.usage))
+        return None
+
+    def _repair_prompt(self, step: PhaseStep, rel: str, failure_tail: str) -> str:
+        existing = self._existing_source(step, rel) or "(file is missing)"
+        return "\n\n".join([
+            "You are the implementation phase agent in REPAIR mode. The "
+            f"project's verification failed; fix `{rel}`.",
+            *self._instructions_block(),
+            *self._contract_block(),
+            "Verification output (excerpt):\n" + failure_tail,
+            f"Current content of `{rel}`:\n" + existing,
+            "Fix ONLY what the failures require. Keep every existing name, "
+            "signature, and docstring exactly as written. Output ONLY the "
+            f"complete, final contents of `{rel}` — no commentary, no file "
+            "markers, no surrounding code fences.",
+        ])
+
+    def _manifest_violations(self) -> list[str]:
+        """The #21 mechanical check, re-run inside the repair loop (FR-RL-009)."""
+        from anvil_runtime.contract import (
+            parse_contract_manifest,
+            resolve_contract,
+            validate_manifest,
+        )
+
+        contract = self._resolve_contract()
+        if not contract.present:
+            return []
+        manifest, error = parse_contract_manifest(contract.text)
+        if error is not None:
+            return [error]
+        if manifest is None:
+            return []
+        return validate_manifest(manifest, self._root / "src")
+
+    def _emit_progress(
+        self, step: PhaseStep, rel: str, index: int, count: int, stage: str
+    ) -> None:
+        """FR-AG-001: progress inside a long phase, observable over SSE."""
+        self._emit_backend_event(step, "PhaseProgress", {
+            "artifact": rel, "index": index, "count": count, "stage": stage,
+        })
 
     # -- prompts ----------------------------------------------------------
 

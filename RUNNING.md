@@ -182,7 +182,30 @@ large tasks; a too-small budget fails the phase with `finish_reason=length`
 after retries rather than shipping a truncated artifact.
 `ANVIL_CONTRACT_MAX_CHARS` (default 16,000) — hard cap on the task-contract
 block (see below); an over-cap contract fails the run at intake rather than
-ever being clipped.
+ever being clipped. `ANVIL_TEMPERATURE` — pinned sampling temperature for
+all completions (unset = provider default; useful for experiments, measured
+not to reduce run-to-run variance).
+
+### Verify what was built — the repair loop (v0.1.4)
+
+Set `ANVIL_TEST_COMMAND` (or config `externalTestCommand`) to a command that
+verifies the generated project (e.g. `python -m pytest tests -q`). After the
+implementation phase, Anvil syntax-checks the generated files, runs your
+command in the run workspace, and on failure repairs ONLY the implicated
+files (one completion each, failure output in the prompt), re-checks the
+task contract, and re-runs — up to `ANVIL_REPAIR_MAX_ROUNDS` (default 2)
+rounds, bounded by `ANVIL_TEST_TIMEOUT_S` (default 600). Rounds exhausted
+red → the phase fails with the test output in the failure record.
+
+- **Opt-in**: no command → no execution, ever (pre-v0.1.4 behavior).
+- **Security**: the command runs unsandboxed in the run workspace, so it is
+  honored only for runs with `security_profile: open` — any other profile
+  fails at intake with a clear reason rather than silently skipping
+  verification.
+
+Long implementation phases now also advance **one artifact per `/advance`**
+(with `PhaseProgress` events on the SSE stream), and mid-phase progress is
+checkpointed — a restart resumes from the last generated file.
 
 ### Task contracts — pin the facts that must survive (v0.1.3)
 

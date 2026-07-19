@@ -88,6 +88,8 @@ class SessionBridge:
             complexity_tier=result.complexity_tier,
             questions=list(result.questions),
             assumptions=list(result.assumptions),
+            # #24: unit-mode progress marker rides the completion contract.
+            phase_complete=result.phase_complete,
         )
 
 

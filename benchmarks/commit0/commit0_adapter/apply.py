@@ -33,7 +33,13 @@ def apply_generated(stage_dir: pathlib.Path, package_dir: pathlib.Path) -> dict:
     src_dir = stage_dir / "src"
     decisions: list[dict] = []
     applied = 0
-    generated = [p for p in sorted(src_dir.rglob("*.py"))] if src_dir.is_dir() else []
+    # In a src-layout repo the real package lives INSIDE src/ (e.g.
+    # src/cachetools/); its skeleton files are not generated output and must
+    # never be grafted onto themselves.
+    package_resolved = package_dir.resolve()
+    generated = [p for p in sorted(src_dir.rglob("*.py"))
+                 if package_resolved not in p.resolve().parents] \
+        if src_dir.is_dir() else []
 
     package_modules = list(package_dir.rglob("*.py"))
     by_basename: dict[str, list[pathlib.Path]] = {}

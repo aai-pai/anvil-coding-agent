@@ -114,6 +114,18 @@ def _build_real_manager(
     # v0.1.3 #20: the task-contract cap follows the same precedence.
     contract_max_chars = int(
         os.environ.get("ANVIL_CONTRACT_MAX_CHARS") or cfg.contractMaxChars)
+    # Pinned sampling temperature; "0" is a meaningful value, so test for
+    # presence rather than truthiness. None -> provider default (historical).
+    temperature_env = os.environ.get("ANVIL_TEMPERATURE")
+    temperature = float(temperature_env) if temperature_env not in (None, "") \
+        else cfg.temperature
+    # v0.1.4 #23 (FR-RL-001): the repair loop's knobs, same precedence.
+    external_test_command = (
+        os.environ.get("ANVIL_TEST_COMMAND") or cfg.externalTestCommand)
+    repair_max_rounds = int(
+        os.environ.get("ANVIL_REPAIR_MAX_ROUNDS") or cfg.repairMaxRounds)
+    test_timeout_s = int(
+        os.environ.get("ANVIL_TEST_TIMEOUT_S") or cfg.testTimeoutS)
     backend = LLMBackend(
         provider, workspace_root, input_char_limit=input_char_limit, event_bus=bus,
         instructions=instructions,
@@ -121,6 +133,10 @@ def _build_real_manager(
         doc_max_tokens=doc_max_tokens,
         code_max_tokens=code_max_tokens,
         contract_max_chars=contract_max_chars,
+        temperature=temperature,
+        external_test_command=external_test_command,
+        repair_max_rounds=repair_max_rounds,
+        test_timeout_s=test_timeout_s,
     )
     # FR-ML-004: a configured allowedModels list becomes an enforced whitelist
     # (with switch-to-allowed remediation); an empty list means unrestricted.

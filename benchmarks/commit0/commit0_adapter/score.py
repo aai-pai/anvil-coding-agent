@@ -18,7 +18,8 @@ from anvil_eval.scoring import _parse_junit
 
 
 def run_repo_tests(stage_dir: pathlib.Path, timeout_s: float = 600.0,
-                   junit_name: str = "commit0-junit.xml") -> dict:
+                   junit_name: str = "commit0-junit.xml",
+                   package_dir: pathlib.Path | None = None) -> dict:
     # The subprocess runs with cwd=stage_dir; every path handed to it must be
     # absolute or it resolves against the wrong base.
     stage_dir = stage_dir.resolve()
@@ -31,7 +32,16 @@ def run_repo_tests(stage_dir: pathlib.Path, timeout_s: float = 600.0,
 
     junit_path = stage_dir / junit_name
     env = dict(os.environ)
-    env["PYTHONPATH"] = str(stage_dir) + os.pathsep + env.get("PYTHONPATH", "")
+    # The IMPORTABLE root is the package's parent — stage root for flat
+    # layouts (tinydb/), <stage>/src for src layouts (src/cachetools/).
+    # With only the stage root on the path, a src-layout repo silently
+    # resolves to any INSTALLED copy of the library (observed: cachetools
+    # 5.3.3 from site-packages scored instead of the staged repo).
+    roots = [str(stage_dir)]
+    if package_dir is not None:
+        roots.insert(0, str(pathlib.Path(package_dir).resolve().parent))
+    env["PYTHONPATH"] = os.pathsep.join(
+        dict.fromkeys(roots)) + os.pathsep + env.get("PYTHONPATH", "")
     command = [sys.executable, "-m", "pytest", str(tests_dir), "-q",
                "--tb=no", "-p", "no:cacheprovider", f"--junitxml={junit_path}"]
     try:
