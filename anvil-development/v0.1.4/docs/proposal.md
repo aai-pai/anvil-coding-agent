@@ -16,10 +16,18 @@ code that names everything correctly and then does the wrong thing, with a
 handful of load-bearing functions deciding whole-run outcomes (tinydb
 one-shot: 0–78 of 201 across five runs). v0.1.4 closes the loop between
 *what Anvil ships* and *what actually runs*: a bounded, opt-in
-run-tests-and-repair loop (#23), with supervisor progress reported at the
-granularity the work now has (#24). Success is a higher *and tighter*
-distribution — the repair loop must collapse the one-shot variance, not just
-raise the mean.
+run-tests-and-repair loop (#23) running in an **isolated playground**
+(#25), localizing failures **structurally** (#26), and resubmitting fixes
+that **preserve functional harmony** with the passing code (#27) — with
+supervisor progress reported at the granularity the work now has (#24).
+Success is a higher *and tighter* distribution — the repair loop must
+collapse the one-shot variance, not just raise the mean.
+
+**Scope revision 2026-07-24.** #25/#26/#27 were added after the first
+#23/#24 iteration shipped (evidence and decisions in the background doc's
+issue ledger). #25 was implemented ahead of its docs — accepted; this
+proposal back-fills it. The release is measured as a repair-loop *bundle*
+(#23+#26+#27 are all score-affecting); #26/#27 are gate-able for ablation.
 
 ## Features
 
@@ -70,20 +78,21 @@ validation), when a command is configured:
 
 **Security posture (new capability class — executing workspace code).**
 
-- The repair loop runs only under security profile `open`; under
-  `restricted`/`strict` a configured `externalTestCommand` is refused at
-  intake with a clear reason (fail loud, not silently skip). Secure-mode
-  runs additionally surface the exact command at the post-blueprint gate.
-- The command runs with cwd = run workspace. v0.1.4 does not sandbox it
-  (documented limitation — same trust level as the user running the command
-  themselves; the benchmarks already execute this code at scoring time).
-  Sandboxing is future work, not silently claimed.
+- With the `local` executor the repair loop runs only under security
+  profile `open`; under `restricted`/`strict` a configured
+  `externalTestCommand` is refused at intake with a clear reason (fail
+  loud, not silently skip). Secure-mode runs additionally surface the
+  exact command at the post-blueprint gate.
+- The `docker` executor (#25, below) is what `restricted`/`strict`
+  profiles require — isolation replaces the profile refusal.
 
 **Commit0 adapter (consumer change, ships alongside).** The adapter
 configures `externalTestCommand` = the repo's pytest invocation pinned to a
 **staging-time snapshot of the original test files**, so Anvil's own
 qa-generated tests can never enter the repair signal or the score (closes
 the existing backlog item). Local scoring keeps using the same snapshot.
+With #25 the adapter may prebuild a per-repo image (skeleton deps + pytest)
+so repair rounds are pure exec.
 
 Tests: no command configured → v0.1.3 behavior byte-for-byte (prompt-level
 and event-level); import smoke failure enters repair; a failing run repairs
@@ -114,6 +123,52 @@ state persisted between calls; kill/resume mid-phase regenerates only
 remaining artifacts; SSE carries per-artifact progress; single-artifact and
 stub runs are unchanged.
 
+### #25 — Docker-isolated test execution (implemented 2026-07-24, back-filled here)
+
+Safety-motivated: the code under test is LLM-generated, so "the user typed
+the command" does not extend to what the command runs. `testExecutor:
+local | docker` (env `ANVIL_TEST_EXECUTOR`), with `testImage` (default
+`python:3.11-slim`) and `testSetupCommand` (run once per container, the
+only step with network). One hardened long-lived container per
+verification pass, `docker exec` per round; **copy-in/copy-out, no bind
+mount** — the container can never write to the host workspace; memory/
+CPU/pids caps, `--cap-drop=ALL`, host-side timeout force-removes the
+container. `docker` is the only executor accepted under
+`restricted`/`strict`; docker configured-but-unavailable fails at intake
+(probe), never a silent skip. Driven via the docker CLI through an
+injectable seam — all tests fake it; no test needs a daemon.
+
+### #26 — Structured failure localization (JUnit XML clustering)
+
+FR-RL-007's basename grep becomes the *fallback*, not the mechanism. When
+`externalTestCommand` contains the token **`{junit_xml}`**, Anvil
+substitutes a canonical report path, reads the report after each run (the
+docker executor copies it out — the one copy-out beyond exit code and
+output), and derives structured failure records: test id, error type,
+message, and the deepest stack frame landing in a generated artifact.
+Failures are **clustered by root cause** (error type + implicated frame):
+the four v0.1.3 tinydb clusters explained ~160 of 177 red tests, so
+cluster-granular repair is where the measured leverage is. Implicated
+files come from clusters (largest first), and each file's repair prompt
+carries its **cluster's representative failures** instead of a raw
+4,000-char output tail. No token in the command → v0.1.4-as-shipped
+behavior, byte-for-byte. Ablation = remove the token; no config field
+needed.
+
+### #27 — Interface-aware repair context (functional harmony)
+
+Binding constraint (2026-07-24): a repair resubmission must see the
+structural connections to the passing code so a targeted fix cannot break
+what already works. Each repair prompt gains a read-only, AST-extracted
+**interface map** of the other generated artifacts: qualnames, signatures,
+parameters, class attributes, one-line docstrings — connection-ranked
+(files the failing file imports or is imported by come first) and
+size-capped. **Signatures only**: bodies of passing files never enter the
+prompt (full dependency-slice source is v0.1.5), and passing files never
+enter the write-set (FR-RL-008 unchanged). Gate: `ANVIL_REPAIR_CONTEXT=
+interfaces` (default) | `minimal` (ablation). Existing muscle: the same
+`ast` pass the #21 validator and the Commit0 stub inventory use.
+
 ## Measurement protocol (new, binding for this release)
 
 Single Commit0 runs are too noisy to compare releases on (measured: tinydb
@@ -126,21 +181,27 @@ per-release regression gate (single run; its variance is not the bottleneck).
 - **Contract ledger** (spec/architecture appending invented contracts with
   provenance) — deferred again; it targets greenfield doc drift, a
   different instrument than #23's, and would muddy attribution.
-- Sandboxed test execution (documented as a limitation of #23, not built).
+- **Full dependency-slice repair context** (bodies of dependent files in
+  the prompt) and the **escalation ladder** for wrong-idea persistence —
+  v0.1.5, informed by this release's measurement.
+- **Tiger team** (multi-role LLM collaboration per failure) — rejected on
+  cost until measurement shows a reasoning-miss tier.
 - Any change to the sampling default — measured in the temperature
   experiment (2026-07-18): temp 0 neither reproduces nor improves the mean.
   `ANVIL_TEMPERATURE` stays an experiment knob.
 - Any change to `anvil-instructions.md` semantics (frozen, 2026-07-11).
 - OpenHands adapter; DevBench/WebGen-Bench adapters; official Commit0
-  docker/modal evaluation.
+  docker/modal evaluation (though #25 is a step toward it).
 
 ## Acceptance criteria
 
 Approved when it supports deriving `spec.md`, `architecture.md`,
-`blueprint.md`, and `plan.md` for #23/#24. Carried into the spec phase: the
+`blueprint.md`, and `plan.md` for #23–#27. Carried into the spec phase: the
 exact repair-round contract (failure→file mapping rules, round bounding,
-event names and payloads), the import-smoke mechanics, the security-profile
-refusal surface, and #24's mid-phase checkpoint schema.
+event names and payloads), the import-smoke mechanics, the
+executor/profile policy surface (#25), the `{junit_xml}` token contract
+and clustering key (#26), the interface-map content and cap (#27), and
+#24's mid-phase checkpoint schema.
 
 Success is measured against the v0.1.3 baselines:
 

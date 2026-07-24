@@ -126,6 +126,14 @@ def _build_real_manager(
         os.environ.get("ANVIL_REPAIR_MAX_ROUNDS") or cfg.repairMaxRounds)
     test_timeout_s = int(
         os.environ.get("ANVIL_TEST_TIMEOUT_S") or cfg.testTimeoutS)
+    # v0.1.4 #25 (FR-DX-001): where the command runs (host subprocess vs
+    # hardened container), same precedence.
+    test_executor = os.environ.get("ANVIL_TEST_EXECUTOR") or cfg.testExecutor
+    test_image = os.environ.get("ANVIL_TEST_IMAGE") or cfg.testImage
+    test_setup_command = (
+        os.environ.get("ANVIL_TEST_SETUP_COMMAND") or cfg.testSetupCommand)
+    # v0.1.4 #27 (FR-IC-004): repair-context gate, same precedence.
+    repair_context = os.environ.get("ANVIL_REPAIR_CONTEXT") or cfg.repairContext
     backend = LLMBackend(
         provider, workspace_root, input_char_limit=input_char_limit, event_bus=bus,
         instructions=instructions,
@@ -137,6 +145,10 @@ def _build_real_manager(
         external_test_command=external_test_command,
         repair_max_rounds=repair_max_rounds,
         test_timeout_s=test_timeout_s,
+        test_executor=test_executor,
+        test_image=test_image,
+        test_setup_command=test_setup_command,
+        repair_context=repair_context,
     )
     # FR-ML-004: a configured allowedModels list becomes an enforced whitelist
     # (with switch-to-allowed remediation); an empty list means unrestricted.

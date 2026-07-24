@@ -12,10 +12,11 @@ Three mechanical pieces, no LLM involvement:
   target is implicated when its basename or relative path appears in the
   command output (FR-RL-007).
 
-Execution is NOT sandboxed in v0.1.4 (documented limitation): the command is
-user-supplied, runs at the same trust level as the user typing it, and is
-honored only under the ``open`` security profile (refused at intake
-otherwise — the backend enforces that, FR-RL-003).
+:func:`run_external_tests` is the ``local`` executor: NOT sandboxed, the
+command runs on the host at the user's own trust level, honored only under
+the ``open`` security profile (refused at intake otherwise — the backend
+enforces that, FR-RL-003). Isolated execution is the ``docker`` executor
+(v0.1.4 #25, ``docker_executor.py``), which other profiles require.
 """
 
 from __future__ import annotations

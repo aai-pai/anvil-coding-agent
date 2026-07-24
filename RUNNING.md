@@ -198,10 +198,32 @@ rounds, bounded by `ANVIL_TEST_TIMEOUT_S` (default 600). Rounds exhausted
 red → the phase fails with the test output in the failure record.
 
 - **Opt-in**: no command → no execution, ever (pre-v0.1.4 behavior).
-- **Security**: the command runs unsandboxed in the run workspace, so it is
-  honored only for runs with `security_profile: open` — any other profile
-  fails at intake with a clear reason rather than silently skipping
-  verification.
+- **Structured localization**: put the literal token `{junit_xml}` in the
+  command (e.g. `python -m pytest tests -q --junitxml {junit_xml}`) and
+  Anvil substitutes a canonical report path, reads the report after each
+  run, and repairs by **root cause** (failures clustered by error type +
+  implicated file, largest cause first) with the cluster's failures in the
+  prompt instead of a raw output tail. No token → the raw-output basename
+  mapping, as before.
+- **Repair context**: repair prompts include an AST interface map of the
+  other generated files (signatures only, never bodies) so a fix keeps
+  the passing code's contracts intact. `ANVIL_REPAIR_CONTEXT=minimal`
+  disables it (ablation/debug).
+- **Where it runs** — `ANVIL_TEST_EXECUTOR` (config `testExecutor`):
+  - `local` (default): unsandboxed subprocess in the run workspace —
+    honored only for runs with `security_profile: open`; any other profile
+    fails at intake with a clear reason rather than silently skipping
+    verification.
+  - `docker`: the command runs in a hardened container (needs a running
+    Docker daemon; probed at intake, unavailable → the run fails at intake,
+    never a silent skip). This is the only executor accepted under
+    `restricted`/`strict` profiles. Sources are `docker cp`'d in each round
+    (the container can never write to the host workspace); the container
+    has no network except during `ANVIL_TEST_SETUP_COMMAND` (config
+    `testSetupCommand`, e.g. `pip install -e . pytest`, run once per
+    container); memory/CPU/pids are capped. Image: `ANVIL_TEST_IMAGE`
+    (config `testImage`, default `python:3.11-slim`). One container serves
+    all repair rounds; a timed-out container is force-removed.
 
 Long implementation phases now also advance **one artifact per `/advance`**
 (with `PhaseProgress` events on the SSE stream), and mid-phase progress is

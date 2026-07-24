@@ -1,6 +1,28 @@
-"""Verification by execution: the external-test repair loop's mechanical
-pieces (v0.1.4 #23). See ``runner.py``."""
+"""Verification by execution — all mechanical, no LLM involvement:
+the repair loop's primitives (v0.1.4 #23, ``runner.py``), the
+docker-isolated executor (#25, ``docker_executor.py``), junit failure
+localization (#26, ``localize.py``), and the interface map for repair
+context (#27, ``interface_map.py``)."""
 
+from anvil_runtime.verify.docker_executor import (
+    DockerError,
+    DockerExecutor,
+    docker_probe,
+)
+from anvil_runtime.verify.interface_map import (
+    INTERFACE_MAP_MAX_CHARS,
+    build as build_interface_map,
+)
+from anvil_runtime.verify.localize import (
+    FailureCluster,
+    FailureRecord,
+    JUNIT_TOKEN,
+    REPORT_REL,
+    cluster,
+    cluster_excerpt,
+    substitute_report_token,
+    try_parse_report,
+)
 from anvil_runtime.verify.runner import (
     EVENT_TAIL_CHARS,
     PROMPT_TAIL_CHARS,
@@ -17,4 +39,17 @@ __all__ = [
     "implicated_files",
     "PROMPT_TAIL_CHARS",
     "EVENT_TAIL_CHARS",
+    "DockerError",
+    "DockerExecutor",
+    "docker_probe",
+    "JUNIT_TOKEN",
+    "REPORT_REL",
+    "FailureRecord",
+    "FailureCluster",
+    "substitute_report_token",
+    "try_parse_report",
+    "cluster",
+    "cluster_excerpt",
+    "build_interface_map",
+    "INTERFACE_MAP_MAX_CHARS",
 ]

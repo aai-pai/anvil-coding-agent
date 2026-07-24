@@ -127,6 +127,11 @@ class LLMBackend:
         external_test_command: str | None = None,
         repair_max_rounds: int | None = None,
         test_timeout_s: int | None = None,
+        test_executor: str | None = None,
+        test_image: str | None = None,
+        test_setup_command: str | None = None,
+        docker_exec_fn: "object | None" = None,
+        repair_context: str | None = None,
     ) -> None:
         from anvil_runtime.config.schema import (
             DEFAULT_CODE_MAX_TOKENS,
@@ -134,7 +139,10 @@ class LLMBackend:
             DEFAULT_DOC_MAX_TOKENS,
             DEFAULT_INPUT_CHAR_LIMIT,
             DEFAULT_INTAKE_MAX_TOKENS,
+            DEFAULT_REPAIR_CONTEXT,
             DEFAULT_REPAIR_MAX_ROUNDS,
+            DEFAULT_TEST_EXECUTOR,
+            DEFAULT_TEST_IMAGE,
             DEFAULT_TEST_TIMEOUT_S,
         )
 
@@ -165,6 +173,17 @@ class LLMBackend:
             else DEFAULT_REPAIR_MAX_ROUNDS
         )
         self._test_timeout_s = test_timeout_s or DEFAULT_TEST_TIMEOUT_S
+        # v0.1.4 #25 (FR-DX-001): `local` runs the command as a host
+        # subprocess (open profile only); `docker` runs it in a hardened
+        # container and is the only executor accepted under other profiles.
+        # docker_exec_fn is the injectable docker-CLI seam (tests).
+        self._test_executor = test_executor or DEFAULT_TEST_EXECUTOR
+        self._test_image = test_image or DEFAULT_TEST_IMAGE
+        self._test_setup_command = test_setup_command
+        self._docker_exec_fn = docker_exec_fn
+        # v0.1.4 #27 (FR-IC-004): `interfaces` injects the passing files'
+        # AST interface map into repair prompts; `minimal` is the ablation.
+        self._repair_context = repair_context or DEFAULT_REPAIR_CONTEXT
         self._events = event_bus
         # #14 (FR-INS-002/003): standing instructions, injected as a dedicated
         # block in every prompt; resolved (and capped) upstream, never truncated
@@ -223,21 +242,37 @@ class LLMBackend:
     def _run_intake(self, session_id: str, step: PhaseStep, model: str) -> StepResult:
         from anvil_runtime.llm.openrouter_provider import CompletionRequest
 
-        # #23 (FR-RL-003): executing workspace code is an `open`-profile
-        # capability. A configured command under any other profile fails the
-        # run AT INTAKE — silently skipping verification the user asked for
-        # would be worse than refusing loudly.
+        # #23 (FR-RL-003) / #25 (FR-DX-002): executing workspace code on the
+        # HOST is an `open`-profile capability; the docker executor's
+        # isolation is what other profiles require. Either way a run that
+        # cannot honor a configured command fails AT INTAKE — silently
+        # skipping verification the user asked for would be worse than
+        # refusing loudly.
         cfg = self._sessions.get(session_id)
         # The RUN's profile (phase context) is authoritative; the session
         # config carries the manager-level fallback.
         profile = str(step.context.get("security_profile") or "") or (
             cfg.security_profile if cfg else "restricted")
-        if self._test_command and profile != "open":
+        if self._test_command and self._test_executor == "docker":
+            from anvil_runtime.verify import docker_probe
+
+            reason = docker_probe(self._docker_exec_fn)
+            if reason is not None:
+                return self._failed_step(
+                    session_id, step,
+                    "externalTestCommand is configured with testExecutor "
+                    f"'docker' but docker is not usable: {reason}; start "
+                    "docker, or switch to testExecutor 'local' (profile "
+                    "'open' only), or remove the command",
+                    usage={},
+                )
+        elif self._test_command and profile != "open":
             return self._failed_step(
                 session_id, step,
                 f"externalTestCommand is configured ({self._test_command!r}) "
                 f"but security profile '{profile}' does not permit executing "
-                "workspace code; use profile 'open' or remove the command",
+                "workspace code on the host; use testExecutor 'docker', "
+                "profile 'open', or remove the command",
                 usage={},
             )
         # #20: an over-cap contract fails the run AT INTAKE with a clear
@@ -671,9 +706,15 @@ class LLMBackend:
         """
         from anvil_runtime.verify import (
             EVENT_TAIL_CHARS,
+            DockerError,
+            DockerExecutor,
+            cluster,
+            cluster_excerpt,
             compile_smoke,
             implicated_files,
             run_external_tests,
+            substitute_report_token,
+            try_parse_report,
         )
 
         artifacts = list(result.artifacts)
@@ -695,38 +736,122 @@ class LLMBackend:
                 "round": 0, "stage": "compile", "repaired": files,
             })
 
-        run = run_external_tests(self._test_command, self._root, self._test_timeout_s)
-        self._emit_test_outcome(step, run, EVENT_TAIL_CHARS)
-        rounds = 0
-        while not run.passed and rounds < self._repair_max_rounds:
-            rounds += 1
-            implicated = implicated_files(run.output_tail, artifacts) or list(artifacts)
-            self._emit_backend_event(step, "RepairRoundStarted", {
-                "round": rounds, "stage": "repair", "implicated": implicated,
-            }, severity="warning")
-            failure = self._repair_files(
-                step, model, implicated, artifacts, run.output_tail, total
+        # #26 (FR-JL-001): the {junit_xml} token turns on structured
+        # localization; without it the basename fallback below is the
+        # mechanism, byte-for-byte as first shipped.
+        command, report_rel = substitute_report_token(self._test_command)
+
+        # #25 (FR-DX-001): one hardened container serves every round of this
+        # pass — repairs happen on the host, the executor copies them in per
+        # round. Docker breaking mid-pass is an infrastructure failure with
+        # its own reason, never conflated with a red test run.
+        executor = None
+        if self._test_executor == "docker":
+            executor = DockerExecutor(
+                image=self._test_image, workspace=self._root,
+                setup_command=self._test_setup_command,
+                run_id=str(step.context.get("run_id", "") or ""),
+                exec_fn=self._docker_exec_fn,
             )
-            if failure is not None:
-                return self._failed_step(session_id, step, failure, total)
-            # FR-RL-009: the contract outranks the tests — a repair that
-            # un-pins a manifest symbol is treated as a still-red round.
-            violations = self._manifest_violations()
-            if violations:
-                run = run.model_copy(update={
-                    "exit_code": 1,
-                    "output_tail": "contract violations introduced by repair: "
-                                   + "; ".join(violations),
-                })
-            else:
-                run = run_external_tests(
-                    self._test_command, self._root, self._test_timeout_s
-                )
-            self._emit_backend_event(step, "RepairRoundCompleted", {
-                "round": rounds, "exit_code": run.exit_code,
-                "passed": run.passed,
+            self._emit_backend_event(step, "DockerExecutorSelected", {
+                "image": self._test_image,
+                "setup": bool(self._test_setup_command),
             })
+
+            def run_tests():
+                return executor.run(
+                    command, self._test_timeout_s, copy_out_rel=report_rel
+                )
+        else:
+            def run_tests():
+                return run_external_tests(
+                    command, self._root, self._test_timeout_s
+                )
+
+        def run_tests_fresh():
+            # A stale report from the previous round must never be read as
+            # this round's result (the command may die before writing one).
+            if report_rel is not None:
+                target = self._root / report_rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.unlink(missing_ok=True)
+            return run_tests()
+
+        def localize(run):
+            """(implicated files, per-file excerpts, cluster summary).
+
+            FR-JL-003/004: clusters drive implication, largest cause first,
+            and each file's repair prompt gets its cluster's summary. Any
+            gap (no token, missing/empty report, no frame matched) degrades
+            to the FR-RL-007 basename mapping with the raw tail.
+            """
+            if report_rel is not None:
+                records = try_parse_report(self._root / report_rel, artifacts)
+                if records is None:
+                    self._emit_backend_event(step, "JunitReportMissing", {
+                        "report": report_rel,
+                    }, severity="warning")
+                elif records:
+                    clusters = cluster(records)
+                    files: list[str] = []
+                    excerpts: dict[str, str] = {}
+                    for entry in clusters:
+                        if entry.file and entry.file not in excerpts:
+                            files.append(entry.file)
+                            excerpts[entry.file] = cluster_excerpt(entry)
+                    summary = [
+                        {"error_type": entry.error_type, "file": entry.file,
+                         "count": entry.size}
+                        for entry in clusters
+                    ]
+                    if files:
+                        return files, excerpts, summary
+            fallback = implicated_files(run.output_tail, artifacts)
+            return fallback or list(artifacts), {}, None
+
+        try:
+            run = run_tests_fresh()
             self._emit_test_outcome(step, run, EVENT_TAIL_CHARS)
+            rounds = 0
+            while not run.passed and rounds < self._repair_max_rounds:
+                rounds += 1
+                implicated, excerpts, clusters_summary = localize(run)
+                round_data = {
+                    "round": rounds, "stage": "repair", "implicated": implicated,
+                }
+                if clusters_summary is not None:  # FR-JL-005
+                    round_data["clusters"] = clusters_summary
+                self._emit_backend_event(
+                    step, "RepairRoundStarted", round_data, severity="warning")
+                failure = self._repair_files(
+                    step, model, implicated, artifacts, run.output_tail, total,
+                    excerpts=excerpts,
+                )
+                if failure is not None:
+                    return self._failed_step(session_id, step, failure, total)
+                # FR-RL-009: the contract outranks the tests — a repair that
+                # un-pins a manifest symbol is treated as a still-red round.
+                violations = self._manifest_violations()
+                if violations:
+                    run = run.model_copy(update={
+                        "exit_code": 1,
+                        "output_tail": "contract violations introduced by repair: "
+                                       + "; ".join(violations),
+                    })
+                else:
+                    run = run_tests_fresh()
+                self._emit_backend_event(step, "RepairRoundCompleted", {
+                    "round": rounds, "exit_code": run.exit_code,
+                    "passed": run.passed,
+                })
+                self._emit_test_outcome(step, run, EVENT_TAIL_CHARS)
+        except DockerError as exc:
+            return self._failed_step(
+                session_id, step, f"docker test executor failed: {exc}", total
+            )
+        finally:
+            if executor is not None:
+                executor.close()
         if not run.passed:
             return self._failed_step(
                 session_id, step,
@@ -752,17 +877,21 @@ class LLMBackend:
     def _repair_files(
         self, step: PhaseStep, model: str, files: list[str],
         artifacts: list[str], failure_tail: str, total: dict[str, int],
+        excerpts: dict[str, str] | None = None,
     ) -> str | None:
         """One repair completion per implicated file; returns a failure reason
         or None. Non-implicated files are never touched (FR-RL-008); with no
         per-file targets the whole-src fallback regenerates in one completion
-        (FR-RL-011)."""
+        (FR-RL-011). ``excerpts`` (#26): per-file cluster summaries that
+        replace the raw tail where available (FR-JL-004)."""
         from anvil_runtime.llm.openrouter_provider import CompletionRequest
 
         for index, rel in enumerate(files):
             self._emit_progress(step, rel, index, len(files), "repair")
+            excerpt = (excerpts or {}).get(rel, failure_tail)
             response = self._provider.complete(CompletionRequest(
-                model=model, prompt=self._repair_prompt(step, rel, failure_tail),
+                model=model,
+                prompt=self._repair_prompt(step, rel, excerpt, artifacts),
                 phase=step.phase, subtask=step.subtask,
                 max_tokens=self._code_max_tokens,
                 temperature=self._temperature,
@@ -778,20 +907,41 @@ class LLMBackend:
             self._emit_artifact_usage(step, rel, dict(response.usage))
         return None
 
-    def _repair_prompt(self, step: PhaseStep, rel: str, failure_tail: str) -> str:
+    def _repair_prompt(
+        self, step: PhaseStep, rel: str, failure_tail: str,
+        artifacts: list[str] | None = None,
+    ) -> str:
         existing = self._existing_source(step, rel) or "(file is missing)"
-        return "\n\n".join([
+        parts = [
             "You are the implementation phase agent in REPAIR mode. The "
             f"project's verification failed; fix `{rel}`.",
             *self._instructions_block(),
             *self._contract_block(),
+        ]
+        # #27 (FR-IC-001..003): the passing files' interfaces travel with
+        # every resubmission so a targeted fix keeps functional harmony.
+        # `minimal` skips this block entirely (the ablation contract is at
+        # the prompt level: byte-for-byte first-iteration prompts).
+        if self._repair_context == "interfaces" and artifacts:
+            from anvil_runtime.verify import build_interface_map
+
+            interfaces = build_interface_map(self._root, artifacts, rel)
+            if interfaces:
+                parts.append(
+                    "Interfaces of the OTHER generated files (read-only "
+                    "context — these are the passing code's contracts; keep "
+                    f"every interface `{rel}` exposes to them intact unless "
+                    "a failure demands otherwise):\n" + interfaces
+                )
+        parts += [
             "Verification output (excerpt):\n" + failure_tail,
             f"Current content of `{rel}`:\n" + existing,
             "Fix ONLY what the failures require. Keep every existing name, "
             "signature, and docstring exactly as written. Output ONLY the "
             f"complete, final contents of `{rel}` — no commentary, no file "
             "markers, no surrounding code fences.",
-        ])
+        ]
+        return "\n\n".join(parts)
 
     def _manifest_violations(self) -> list[str]:
         """The #21 mechanical check, re-run inside the repair loop (FR-RL-009)."""
