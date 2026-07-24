@@ -19,13 +19,21 @@ from anvil_eval.scoring import _parse_junit
 
 def run_repo_tests(stage_dir: pathlib.Path, timeout_s: float = 600.0,
                    junit_name: str = "commit0-junit.xml",
-                   package_dir: pathlib.Path | None = None) -> dict:
+                   package_dir: pathlib.Path | None = None,
+                   test_files: list[str] | None = None) -> dict:
     # The subprocess runs with cwd=stage_dir; every path handed to it must be
     # absolute or it resolves against the wrong base.
     stage_dir = stage_dir.resolve()
+    # v0.1.4 spec §3: score only the staging-time snapshot of the repo's own
+    # test files (stage-relative paths), so Anvil's qa-generated tests can
+    # never inflate the score. No snapshot -> whole tests/ dir (old behavior).
+    selected: list[pathlib.Path] = []
+    if test_files:
+        selected = [stage_dir / rel for rel in test_files
+                    if (stage_dir / rel).is_file()]
     tests_dir = next((stage_dir / name for name in ("tests", "test")
                       if (stage_dir / name).is_dir()), None)
-    if tests_dir is None:
+    if not selected and tests_dir is None:
         return {"error": "no tests/ directory found", "total": 0,
                 "failures": 0, "errors": 0, "skipped": 0, "passed_count": 0,
                 "pass_rate": 0.0}
@@ -42,7 +50,8 @@ def run_repo_tests(stage_dir: pathlib.Path, timeout_s: float = 600.0,
         roots.insert(0, str(pathlib.Path(package_dir).resolve().parent))
     env["PYTHONPATH"] = os.pathsep.join(
         dict.fromkeys(roots)) + os.pathsep + env.get("PYTHONPATH", "")
-    command = [sys.executable, "-m", "pytest", str(tests_dir), "-q",
+    targets = [str(p) for p in selected] if selected else [str(tests_dir)]
+    command = [sys.executable, "-m", "pytest", *targets, "-q",
                "--tb=no", "-p", "no:cacheprovider", f"--junitxml={junit_path}"]
     try:
         proc = subprocess.run(command, cwd=str(stage_dir), env=env,

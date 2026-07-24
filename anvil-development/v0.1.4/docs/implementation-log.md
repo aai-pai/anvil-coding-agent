@@ -115,17 +115,49 @@ recorded in [background-information.md](../domain-knowledge/background-informati
   completes with `ExternalTestsPassed`; restricted-profile run with a
   command escalates at intake with the reason in the failure record.
 
-## Still to do in this cycle (plan.md slices 4–7)
+### Commit0 adapter integration (spec §3) — DONE (plan slice 4)
 
-- **Commit0 adapter integration** (spec §3): staging-time snapshot of the
-  original test files; an adapter-owned `graft_and_test.py` entry point
-  (carrying `{junit_xml}`) as the `ANVIL_TEST_COMMAND`; drop the
-  long-advance timeout workaround; optional per-repo docker image.
+- `prepare.py` — staging now snapshots the repo's original test files
+  (`commit0-meta.json`: package rel/name + test list, test-pattern files
+  only) and keeps a pristine package copy (`.commit0-pristine/`). The
+  pristine copy is load-bearing: the graft fills only STUB bodies, so
+  repairs can never propagate through an already-grafted package.
+- New `graft_and_test.py` — the repair-signal entry point Anvil runs as
+  `externalTestCommand` (cwd = run workspace): re-create scratch from
+  pristine → `apply_generated` onto scratch (staged skeleton untouched;
+  original package dir passed as `exclude_dir` so src-layouts still
+  exclude skeleton files) → run the snapshot tests against scratch
+  (scratch shadows the skeleton via cwd + PYTHONPATH head) → write the
+  `{junit_xml}` report #26 reads → exit with pytest's code. The repair
+  signal tests exactly what scoring tests.
+- `score.py` — `test_files` param: scoring runs only the snapshot (qa-leak
+  fix); no snapshot → old whole-dir behavior.
+- `apply.py` — `exclude_dir` param (scratch grafting for src-layouts).
+- `cli.py` — spawned servers get `ANVIL_TEST_COMMAND` (entry point +
+  token) and `ANVIL_TEST_TIMEOUT_S`; `--no-repair` flag for one-shot /
+  ablation runs; the whole-run-budget advance-timeout workaround is
+  replaced by a principled per-unit bound
+  (`(rounds+1) × test_timeout + slack` — the verify/repair unit is the
+  longest single advance); both score calls use the snapshot.
+- Tests: `tests/unit/benchmarks/test_commit0_repair_integration.py` (4,
+  real pytest subprocesses over a miniature skeleton repo) — snapshot
+  meta + pristine written; qa-generated test never enters the score;
+  green graft-and-test leaves the skeleton untouched; **a repair
+  propagates through the pristine re-graft** (the in-place graft would
+  have silently pinned the first wrong body forever). Suite: **396**.
+
+## Still to do in this cycle (plan.md slices 5–7)
+
 - **Real-docker smoke** (manual, once): offline-llm run with
   `ANVIL_TEST_EXECUTOR=docker` to validate the CLI assumptions the fakes
-  encode.
+  encode. Blocked 2026-07-24: no docker CLI on the dev machine — needs
+  Docker Desktop installed; the measurement does not depend on it (local
+  executor + `open` profile).
 - **The measurement** (bundle: #23+#26+#27): tinydb median-of-3 with the
   loop vs the one-shot baseline (median 24/201, distribution
   {0, 19, 24, 60, 78}, import-fail 1/5); cachetools must hold ≥ 177/215;
   smoke suite 6/6 with no command; executor + ablation flags recorded per
-  run.
+  run. Needs `OPENROUTER_API_KEY`:
+  `python benchmarks/commit0/run_commit0.py run --repo tinydb
+  --start-server --mode real --label v0.1.4-r1` (×3).
+- **Close-out**: STATUS.md run-log entries with the measured numbers.

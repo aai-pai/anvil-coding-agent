@@ -24,11 +24,17 @@ def _is_valid_python(path: pathlib.Path) -> bool:
         return False
 
 
-def apply_generated(stage_dir: pathlib.Path, package_dir: pathlib.Path) -> dict:
+def apply_generated(stage_dir: pathlib.Path, package_dir: pathlib.Path,
+                    exclude_dir: pathlib.Path | None = None) -> dict:
     """Copy generated src/*.py over matching package modules.
 
     Matching, in order: exact package-relative path, then unique basename
     match anywhere in the package. Returns counts + the per-file decisions.
+
+    ``exclude_dir``: the directory whose files are skeleton, not generated
+    output. Defaults to ``package_dir`` (in-place graft); the repair-signal
+    entry point grafts onto a SCRATCH package and passes the original
+    package dir here so a src-layout skeleton is still excluded.
     """
     src_dir = stage_dir / "src"
     decisions: list[dict] = []
@@ -36,7 +42,7 @@ def apply_generated(stage_dir: pathlib.Path, package_dir: pathlib.Path) -> dict:
     # In a src-layout repo the real package lives INSIDE src/ (e.g.
     # src/cachetools/); its skeleton files are not generated output and must
     # never be grafted onto themselves.
-    package_resolved = package_dir.resolve()
+    package_resolved = (exclude_dir or package_dir).resolve()
     generated = [p for p in sorted(src_dir.rglob("*.py"))
                  if package_resolved not in p.resolve().parents] \
         if src_dir.is_dir() else []

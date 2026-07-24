@@ -9,6 +9,7 @@ instructions — the mechanism that took the smoke suite from 50% to 100%).
 
 from __future__ import annotations
 
+import json
 import pathlib
 import shutil
 
@@ -84,6 +85,21 @@ docstrings must match the skeleton exactly.
 
 {readme_excerpt}
 """
+
+# v0.1.4 spec §3: staging-time metadata for the repair-signal entry point
+# (graft_and_test.py) and for qa-leak-proof scoring. The pristine package
+# copy exists because grafting fills only STUB bodies — repairs can never
+# propagate through an already-grafted package, so every repair round must
+# re-graft from pristine.
+META_NAME = "commit0-meta.json"
+PRISTINE_DIR = ".commit0-pristine"
+SCRATCH_DIR = ".commit0-scratch"
+
+
+def is_test_file(rel: str) -> bool:
+    name = rel.replace("\\", "/").rsplit("/", 1)[-1]
+    return name.startswith("test_") or name.endswith("_test.py")
+
 
 # Behavioral documentation first; project-process files never (they spend
 # input budget without describing library behavior).
@@ -195,6 +211,28 @@ def stage_workspace(repo: str, skeleton_dir: pathlib.Path,
     dk_dir.mkdir(exist_ok=True)
     (dk_dir / "background-information.md").write_text(task, encoding="utf-8")
     (dk_dir / "anvil-instructions.md").write_text(INSTRUCTIONS, encoding="utf-8")
+
+    # v0.1.4 spec §3 — snapshot the repo's ORIGINAL test files (Anvil's own
+    # qa-generated tests can never enter the repair signal or the score) and
+    # keep a pristine package copy for the per-round re-graft.
+    tests_dir = next((stage_dir / name for name in ("tests", "test")
+                      if (stage_dir / name).is_dir()), None)
+    test_snapshot = sorted(
+        p.relative_to(stage_dir).as_posix()
+        for p in tests_dir.rglob("*.py")
+        if is_test_file(p.name)
+    ) if tests_dir else []
+    pristine = stage_dir / PRISTINE_DIR / package_dir.name
+    if pristine.parent.exists():
+        shutil.rmtree(pristine.parent)
+    shutil.copytree(package_dir, pristine)
+    (stage_dir / META_NAME).write_text(json.dumps({
+        "repo": repo,
+        "package_rel": package_dir.relative_to(stage_dir).as_posix(),
+        "package_name": package_dir.name,
+        "tests": test_snapshot,
+    }, indent=2), encoding="utf-8")
+
     return {
         "package_dir": str(package_dir),
         "package_rel": str(package_dir.relative_to(stage_dir)),
@@ -205,7 +243,9 @@ def stage_workspace(repo: str, skeleton_dir: pathlib.Path,
         "prestaged_src": len(seen),
         "task_chars": len(task),
         "doc_chars": len(docs),
+        "test_snapshot": len(test_snapshot),
     }
 
 
-__all__ = ["stage_workspace", "INSTRUCTIONS", "TASK_TEMPLATE"]
+__all__ = ["stage_workspace", "INSTRUCTIONS", "TASK_TEMPLATE",
+           "META_NAME", "PRISTINE_DIR", "SCRATCH_DIR", "is_test_file"]

@@ -31,6 +31,9 @@ from commit0_adapter.score import run_repo_tests
 BENCH_ROOT = pathlib.Path(__file__).resolve().parent.parent
 RESULTS_ROOT = BENCH_ROOT / "results"
 SKELETONS_ROOT = BENCH_ROOT / "skeletons"
+# v0.1.4 spec §3: the repair-signal entry point Anvil runs after the
+# implementation phase ({junit_xml} activates #26 localization).
+GRAFT_AND_TEST = pathlib.Path(__file__).resolve().parent / "graft_and_test.py"
 
 
 def run_one(client: AnvilClient, repo: str, results_dir: pathlib.Path,
@@ -48,10 +51,17 @@ def run_one(client: AnvilClient, repo: str, results_dir: pathlib.Path,
             f" | task {info['task_chars']:,} chars"
             f" ({info['doc_chars']:,} from docs)")
 
+        # Score only the staging-time test snapshot (qa-leak fix, spec §3).
+        meta = json.loads((stage_dir / "commit0-meta.json").read_text(
+            encoding="utf-8"))
+        snapshot_tests = meta["tests"]
+        result["test_snapshot"] = len(snapshot_tests)
+
         if baseline:
             base = run_repo_tests(stage_dir, timeout_s=test_timeout_s,
                                   junit_name="baseline-junit.xml",
-                                  package_dir=pathlib.Path(info["package_dir"]))
+                                  package_dir=pathlib.Path(info["package_dir"]),
+                                  test_files=snapshot_tests)
             result["baseline"] = {k: base[k] for k in
                                   ("total", "passed_count", "pass_rate")}
             log(f"    skeleton baseline: {base['passed_count']}/{base['total']}")
@@ -82,7 +92,8 @@ def run_one(client: AnvilClient, repo: str, results_dir: pathlib.Path,
             f"{merged['applied']}/{merged['generated_py_files']} generated modules")
 
         tests = run_repo_tests(stage_dir, timeout_s=test_timeout_s,
-                               package_dir=pathlib.Path(info["package_dir"]))
+                               package_dir=pathlib.Path(info["package_dir"]),
+                               test_files=snapshot_tests)
         result["tests"] = {k: tests.get(k) for k in
                            ("total", "passed_count", "failures", "errors",
                             "skipped", "pass_rate", "exit_code",
@@ -141,6 +152,9 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--test-timeout", type=float, default=600.0)
     run.add_argument("--baseline", action="store_true",
                      help="also score the untouched skeleton for a delta")
+    run.add_argument("--no-repair", action="store_true",
+                     help="do not configure the repair loop on the spawned "
+                          "server (one-shot / #23-ablation runs)")
     args = parser.parse_args(argv)
 
     if args.command == "list":
@@ -156,11 +170,14 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     cfg = EvalConfig(run_mode="yolo", task_timeout_s=args.timeout)
-    # #22 made the implementation phase per-artifact: ONE /advance call now
-    # runs ~a completion per module (observed ~70s each on tinydb), so the
-    # default 600s per-advance client timeout kills library-scale runs
-    # mid-phase. Let a single advance use the whole per-repo budget.
-    cfg.advance_timeout_s = args.timeout
+    # #24 landed: one /advance now performs one artifact (or the final
+    # verify/repair unit), so the old whole-run-budget workaround is gone.
+    # The verify/repair unit is still the longest single advance — a test
+    # run per round plus repair completions — so bound it by what the loop
+    # can actually spend: (rounds + 1) test runs + slack for completions.
+    repair_rounds = int(os.environ.get("ANVIL_REPAIR_MAX_ROUNDS", "2"))
+    cfg.advance_timeout_s = max(cfg.advance_timeout_s,
+                                (repair_rounds + 1) * args.test_timeout + 300)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     results_dir = RESULTS_ROOT / (f"{stamp}-{args.label}" if args.label else stamp)
     results_dir.mkdir(parents=True, exist_ok=True)
@@ -181,6 +198,16 @@ def main(argv: list[str] | None = None) -> int:
             # runs past the 16k default; the cap fails intake loudly, so give
             # it headroom rather than shrinking the pinned inventory.
             os.environ.setdefault("ANVIL_CONTRACT_MAX_CHARS", "48000")
+            # v0.1.4 #23/#26: the repair signal is the adapter's
+            # graft-and-test entry point over the staging snapshot; the
+            # {junit_xml} token turns on structured localization. The run's
+            # `open` profile permits the local executor.
+            if not args.no_repair:
+                os.environ.setdefault(
+                    "ANVIL_TEST_COMMAND",
+                    f"{sys.executable} {GRAFT_AND_TEST} {{junit_xml}}")
+                os.environ.setdefault("ANVIL_TEST_TIMEOUT_S",
+                                      str(int(args.test_timeout)))
             server = AnvilServer(args.mode, results_dir / "server-workspace")
             print(f"starting Anvil server ({args.mode}) on {server.base_url} "
                   f"(input limit {os.environ['ANVIL_INPUT_CHAR_LIMIT']}, "

@@ -1,9 +1,24 @@
 # Commit0 × Anvil — status, findings, and future work
 
-*Last updated: 2026-07-12. This document is the handoff record of the Commit0
+*Last updated: 2026-07-24. This document is the handoff record of the Commit0
 testing/fixing arc: what was built, what each run found, what was fixed, and
 what comes next. Read alongside [README.md](README.md) (usage) and
 [evals/README.md](../../evals/README.md) (the Tier-1 harness this builds on).*
+
+> **2026-07-24 — v0.1.4 runtime + adapter integration complete (396 tests).**
+> The verified repair loop is a bundle: #23 (bounded repair loop), #25
+> (docker-isolated execution — safety-motivated; `local` remains the
+> measurement default), #26 (junit clustering — repair by root cause), #27
+> (interface-aware repair prompts — passing files' signatures travel with
+> every resubmission). Adapter side (spec §3, all landed): staging snapshots
+> the original test files (qa-generated tests can never enter the repair
+> signal or the score), `graft_and_test.py` is the repair-signal entry
+> point (pristine re-graft per round — an in-place graft would pin the
+> first wrong body forever), and the long-advance timeout workaround is
+> replaced by a per-unit bound. One-shot/ablation lever: `--no-repair`.
+> **The v0.1.4 measurement (tinydb median-of-3 vs baseline median 24/201)
+> is the next real-key step**; docs in
+> [anvil-development/v0.1.4/docs/](../../anvil-development/v0.1.4/docs/).
 
 > **2026-07-12 — v0.1.3 implemented.** #20 (contract/context split), #21
 > (mechanical contract validation), and #22 (skeleton-aware per-artifact
