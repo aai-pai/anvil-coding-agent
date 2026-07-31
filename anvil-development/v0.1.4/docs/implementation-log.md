@@ -123,13 +123,17 @@ recorded in [background-information.md](../domain-knowledge/background-informati
   pristine copy is load-bearing: the graft fills only STUB bodies, so
   repairs can never propagate through an already-grafted package.
 - New `graft_and_test.py` — the repair-signal entry point Anvil runs as
-  `externalTestCommand` (cwd = run workspace): re-create scratch from
-  pristine → `apply_generated` onto scratch (staged skeleton untouched;
-  original package dir passed as `exclude_dir` so src-layouts still
-  exclude skeleton files) → run the snapshot tests against scratch
-  (scratch shadows the skeleton via cwd + PYTHONPATH head) → write the
-  `{junit_xml}` report #26 reads → exit with pytest's code. The repair
-  signal tests exactly what scoring tests.
+  `externalTestCommand` (cwd = run workspace): restore the staged package
+  from pristine → `apply_generated` in place → run the snapshot tests
+  with score.py's proven invocation shape → write the `{junit_xml}`
+  report #26 reads → exit with pytest's code. The repair signal tests
+  exactly what scoring tests. **Real-run lesson (2026-07-24)**: the first
+  version grafted onto a scratch package and relied on sys.path ordering;
+  in the real tinydb run pytest's conftest loading resolved the STAGE
+  skeleton anyway (dangling `_immutable` NameError → pytest exit 4, no
+  junit report, loop repaired blind — runs r1/r2 at 22:30/23:00 invalid).
+  Fixed to in-place restore+graft; validated against the failed run's
+  stage: 201 collected, real failure tracebacks.
 - `score.py` — `test_files` param: scoring runs only the snapshot (qa-leak
   fix); no snapshot → old whole-dir behavior.
 - `apply.py` — `exclude_dir` param (scratch grafting for src-layouts).
@@ -146,18 +150,36 @@ recorded in [background-information.md](../domain-knowledge/background-informati
   propagates through the pristine re-graft** (the in-place graft would
   have silently pinned the first wrong body forever). Suite: **396**.
 
-## Still to do in this cycle (plan.md slices 5–7)
+## The measurement (plan slice 6) — DONE 2026-07-25
+
+All acceptance criteria met (local executor, `open` profile,
+`ANVIL_REPAIR_CONTEXT=interfaces`, `{junit_xml}` active):
+
+1. **tinydb median-of-3: {47, 61, 134} of 201 — median 61 (30.3%)** vs
+   the v0.1.3 one-shot baseline median 24 (11.9%), distribution
+   {0, 19, 24, 60, 78}. Median beaten 2.5×; **import-fail arm deleted**
+   (floor 47 vs 0). Junit signal healthy in every round
+   (`JunitReportMissing` 0 across all runs). Cost 386–460k tokens/run
+   (~2.7× one-shot), 32–44 min wall.
+2. **cachetools 177/215 (82.3%)** — holds the v0.1.3 bar exactly (64k
+   tokens).
+3. **Smoke suite 6/6 (100%), no command configured** — avg 18k
+   tokens/task; the opt-in default leaves v0.1.3 behavior intact.
+
+Spec deviation noted: FR-RL-010's "pass movement where parseable" is not
+on `RepairRoundCompleted` (exit code only); pass movement is derivable
+from the per-round cluster counts instead. Carried to v0.1.5 as a
+refinement, not a blocker.
+
+First-batch lesson (2026-07-24, runs `v0.1.4-r1/r2` INVALID): the v1
+scratch-package entry point let pytest resolve the stage skeleton via
+conftest loading — exit 4, no report, loop repaired blind. Fixed to
+in-place restore+graft (see adapter section); the failure and fix are in
+STATUS.md's run log.
+
+## Still to do in this cycle
 
 - **Real-docker smoke** (manual, once): offline-llm run with
   `ANVIL_TEST_EXECUTOR=docker` to validate the CLI assumptions the fakes
   encode. Blocked 2026-07-24: no docker CLI on the dev machine — needs
-  Docker Desktop installed; the measurement does not depend on it (local
-  executor + `open` profile).
-- **The measurement** (bundle: #23+#26+#27): tinydb median-of-3 with the
-  loop vs the one-shot baseline (median 24/201, distribution
-  {0, 19, 24, 60, 78}, import-fail 1/5); cachetools must hold ≥ 177/215;
-  smoke suite 6/6 with no command; executor + ablation flags recorded per
-  run. Needs `OPENROUTER_API_KEY`:
-  `python benchmarks/commit0/run_commit0.py run --repo tinydb
-  --start-server --mode real --label v0.1.4-r1` (×3).
-- **Close-out**: STATUS.md run-log entries with the measured numbers.
+  Docker Desktop installed; the measurement did not depend on it.

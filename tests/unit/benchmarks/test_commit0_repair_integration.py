@@ -89,7 +89,7 @@ def test_scoring_counts_only_snapshot_tests(tmp_path: pathlib.Path) -> None:
     assert scored["total"] == 1  # the qa test never entered the score
 
 
-def test_graft_and_test_green_and_skeleton_untouched(
+def test_graft_and_test_green_grafts_in_place(
     tmp_path: pathlib.Path, monkeypatch,
 ) -> None:
     stage = _stage(tmp_path)
@@ -98,8 +98,12 @@ def test_graft_and_test_green_and_skeleton_untouched(
     monkeypatch.chdir(stage)
     assert graft_and_test.main([".anvil/junit-report.xml"]) == 0
     assert (stage / ".anvil" / "junit-report.xml").is_file()
-    # The staged skeleton is untouched: final apply still starts clean.
-    assert "pass" in (stage / "mylib" / "core.py").read_text(encoding="utf-8")
+    # In-place graft: the staged package carries the implementation, while
+    # the pristine copy stays stubbed as the per-round restoration source.
+    assert "return a + b" in (stage / "mylib" / "core.py").read_text(
+        encoding="utf-8")
+    assert "pass" in (stage / PRISTINE_DIR / "mylib" / "core.py").read_text(
+        encoding="utf-8")
 
 
 def test_repairs_propagate_via_pristine_regraft(

@@ -20,6 +20,15 @@ what comes next. Read alongside [README.md](README.md) (usage) and
 > is the next real-key step**; docs in
 > [anvil-development/v0.1.4/docs/](../../anvil-development/v0.1.4/docs/).
 
+> **2026-07-25 — v0.1.4 MEASURED. tinydb median-of-3 with the repair loop:
+> {47, 61, 134} of 201 — median 61 (30.3%) vs one-shot baseline median 24
+> (11.9%). Import-fail arm deleted (floor 47 vs baseline floor 0; the
+> worst repaired run beats 3 of 5 baseline runs). cachetools holds at
+> 177/215 (82.3%). Smoke suite 6/6 with no command (avg 18k tokens/task —
+> opt-in default intact). Cost: ~420k tokens/run vs 154k one-shot (~2.7×)
+> for 2.5× the median.** All acceptance criteria met. Details in the run
+> log below.
+
 > **2026-07-12 — v0.1.3 implemented.** #20 (contract/context split), #21
 > (mechanical contract validation), and #22 (skeleton-aware per-artifact
 > implementation) are now in Anvil core (343 tests green; see the
@@ -84,6 +93,14 @@ apply+score = **201/201 tests** on tinydb; untouched skeleton = import-fail
 
 | `v0.1.3-validation` tinydb (2026-07-18 21:12) | **imports end-to-end, 78/201 (38.8%)** — first run to produce a pass rate with no rescore step | Confirms the graft fix in the loop. Also calibrates one-shot variance: two independent v0.1.3 runs scored 24/201 and 78/201 — same pipeline, different generations. |
 | `v0.1.3-validation` cachetools (2026-07-18 21:12) | reported 0/2 "import-fail" — but the harness had scored the INSTALLED site-packages cachetools, not the staged repo | cachetools is a **src-layout** repo (`src/cachetools/`): `score.py` put only the stage root on `PYTHONPATH`, so `import cachetools` resolved to anaconda's 5.3.3; `apply.py` also swept the in-src package as "generated" and grafted it onto itself. → both fixed (importable root = package parent dir; package-internal files excluded from apply). Offline rescore of the same output: **177/215 (82.3%)** — all 10 stubs in 2 modules generated and grafted cleanly; failures are one `func.py` decorator-attribute cluster (~37) + one `typedmethodkey` assertion. |
+
+| `v0.1.4-r1`/`-r2` (2026-07-24 22:30/23:00) | **INVALID as measurements** — 18/201 and 0/0; every repair-signal run died with pytest exit 4, no junit report, loop repaired blind | Harness bug, not Anvil: `graft_and_test.py` v1 grafted onto a scratch package and relied on sys.path ordering; pytest's conftest loading resolved the STAGE skeleton anyway (dangling `_immutable` NameError at collection). → entry point rewritten to restore-from-pristine + graft **in place**, using score.py's proven invocation; validated offline against the dead run's stage (201 collected). |
+| **`v0.1.4-fix-r1..r3` (2026-07-24/25) — THE v0.1.4 MEASUREMENT** | **{47, 61, 134} of 201 — median 61 (30.3%)** vs baseline median 24 (11.9%); zero import-fails; junit signal healthy every round (`JunitReportMissing` 0); repairs targeted utils/operations/storages per cluster | The repair loop does what it was built for: the catastrophic arm is gone (floor 47 vs 0) and the median is 2.5× the baseline. Cost 386–460k tokens (~2.7× one-shot). All runs end `escalated` — green requires the full 201-test suite, unreachable by design here; the score is the final repaired state. Two v0.1.5 leads: (1) the largest cluster every round is `file: null` (68–75 assertion failures whose tracebacks stay in test files — a test-file→module mapping heuristic would put them in play); (2) "rounds exhausted red" is the loop's *normal successful* exit on a benchmark, but reads as failure in run status. |
+| `v0.1.4-cachetools` (2026-07-25) | **177/215 (82.3%)** — holds the v0.1.3 bar exactly; 64k tokens | High-baseline case does not regress with the loop in play. |
+
+**Smoke suite `v0.1.4-smoke` (2026-07-25): 6/6 resolved (100%), avg 18,073
+tokens/task, no `externalTestCommand` configured** — the opt-in default
+leaves non-benchmark behavior intact (FR-RL-002 held in production).
 
 **Temperature experiment (2026-07-18, 3× tinydb at `ANVIL_TEMPERATURE=0`,
 labels `v0.1.3-temp0-r1..r3`):** scores 0 (import-fail), 0 (import-fail),

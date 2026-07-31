@@ -72,9 +72,13 @@ adapter §3). #23/#24/#25 are shipped; their blueprint is the
 
 - `prepare.py`: snapshot the staged repo's original `tests/` file list
   (JSON alongside the stage); `score.py` runs only snapshot files.
-- New `graft_and_test.py` entry point: graft generated `src/` onto a
-  scratch skeleton copy, run the snapshot suite with
-  `--junitxml {junit_xml}`; wired as `ANVIL_TEST_COMMAND` by `cli.py`.
+- New `graft_and_test.py` entry point: restore the staged package from
+  the pristine copy, graft generated `src/` onto it in place, run the
+  snapshot suite with `--junitxml {junit_xml}` using score.py's proven
+  invocation shape; wired as `ANVIL_TEST_COMMAND` by `cli.py`. (A scratch
+  package + sys.path shadowing was tried first and failed in the real
+  run: pytest's conftest loading resolved the stage skeleton anyway —
+  see the module docstring.)
 - Drop the long-advance timeout workaround (FR-AG-002 landed).
 
 ## Tests
