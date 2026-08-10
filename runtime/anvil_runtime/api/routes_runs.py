@@ -12,12 +12,15 @@ next gate, escalation, stop, or completion before responding.
 from __future__ import annotations
 
 import pathlib
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
 from anvil_runtime.api.deps import get_run_manager
+from anvil_runtime.api.run_workspace import resolve_run_workspace
 from anvil_runtime.api.models import (
     ApprovalRequest,
+    ClarifyRequest,
     OverrideRequest,
     OverrideResult,
     RunStarted,
@@ -25,6 +28,8 @@ from anvil_runtime.api.models import (
     RunStateResponse,
 )
 from anvil_runtime.core.development_manager import DevelopmentManager, RunProgress
+from anvil_runtime.core.phase_contracts import EventEnvelope
+from anvil_runtime.instructions import INSTRUCTIONS_FILENAME, resolve_instructions
 
 router = APIRouter(prefix="/v1/runs", tags=["runs"])
 
@@ -37,10 +42,51 @@ def _to_state_response(progress: RunProgress) -> RunStateResponse:
         current_phase=progress.current_phase,
         completed_phases=list(progress.completed_phases),
         pending_approval_gate=progress.pending_approval_gate,
+        pending_questions=list(progress.pending_questions),
     )
 
 
 DOMAIN_KNOWLEDGE_FILE = "domain-knowledge/background-information.md"
+
+
+def _source_slug_seed(content: str, stem: str) -> str:
+    """Slug seed for a source-file run: first ``#`` heading, else file stem (FR-SRC-002)."""
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            heading = stripped.lstrip("#").strip()
+            if heading:
+                return heading
+    return stem
+
+
+def _materialize_source(base: str, source_path: str) -> str:
+    """Copy a source markdown file into a fresh isolated run workspace (FR-SRC-001).
+
+    Also copies a sibling ``anvil-instructions.md`` into the run's
+    ``domain-knowledge/`` so run-level instructions travel with the request
+    (FR-INS-005). Returns the run workspace root; raises 400 when the source is
+    missing or unreadable (FR-SRC-003) — nothing is created in that case.
+    """
+    source = pathlib.Path(source_path)
+    try:
+        content = source.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"source_path is missing or unreadable: {source_path} ({exc})",
+        )
+    seed = _source_slug_seed(content, source.stem)
+    workspace_root = resolve_run_workspace(base, seed, datetime.now(timezone.utc))
+    target = pathlib.Path(workspace_root) / DOMAIN_KNOWLEDGE_FILE
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+    sibling = source.parent / INSTRUCTIONS_FILENAME
+    if sibling.is_file():
+        (target.parent / INSTRUCTIONS_FILENAME).write_text(
+            sibling.read_text(encoding="utf-8"), encoding="utf-8"
+        )
+    return workspace_root
 
 
 @router.post("", response_model=RunStarted, status_code=status.HTTP_201_CREATED)
@@ -61,32 +107,125 @@ def start_run(
     stream live progress (Level 2).
     """
     state = http_request.app.state
-    # Resolve this run's manager + workspace (per-run, or the server default).
-    if request.workspace and request.workspace != state.workspace_root:
-        from anvil_runtime.app import RunHandle, build_manager
-
-        manager, bus = build_manager(
-            request.workspace, state.execution_mode, state.config, state.secret_adapter
+    base = request.workspace or state.workspace_root
+    if request.task and request.source_path:
+        # FR-SRC-004: two competing intents is a caller error.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="'task' and 'source_path' are mutually exclusive",
         )
-        workspace_root = request.workspace
-        handle = RunHandle(manager, bus, workspace_root)
-    else:
-        manager = state.manager
-        workspace_root = state.workspace_root
-        handle = state.default_handle
-
+    # #9 (FR-RUN-001/002): a `build` run (task supplied) executes in its own isolated
+    # runs/<date>-<slug>/ workspace so unrelated repo artifacts cannot override it. A
+    # `start` run (no task) uses the prepared workspace as-is and reads its existing
+    # domain-knowledge file (FR-RUN-004). #17 (FR-SRC-001): a `source_path` run copies
+    # the referenced markdown file into a fresh isolated workspace, then behaves like
+    # a `task` run.
     if request.task:
+        workspace_root = resolve_run_workspace(base, request.task, datetime.now(timezone.utc))
         target = pathlib.Path(workspace_root) / DOMAIN_KNOWLEDGE_FILE
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(
             f"# Project Request\n\n{request.task.strip()}\n", encoding="utf-8"
         )
+    elif request.source_path:
+        workspace_root = _materialize_source(base, request.source_path)
+    else:
+        workspace_root = base
+
+    # #14 (FR-INS-001): resolve standing instructions for this run's roots.
+    resolved_instructions = resolve_instructions(workspace_root, base)
+
+    # Build a per-run manager rooted at the run workspace (FR-RUN-003); reuse the
+    # default manager only when the run targets the server's own root.
+    if workspace_root != state.workspace_root:
+        from anvil_runtime.app import RunHandle, build_manager
+
+        manager, bus = build_manager(
+            workspace_root, state.execution_mode, state.config, state.secret_adapter,
+            instructions=resolved_instructions.text,
+        )
+        handle = RunHandle(manager, bus, workspace_root)
+    else:
+        manager = state.manager
+        handle = state.default_handle
 
     started = manager.start_run(request)
+    # FR-INS-004: the audit trail records which instructions governed this run.
+    handle.event_bus.emit(EventEnvelope(
+        timestamp=datetime.now(timezone.utc), eventType="InstructionsResolved",
+        runId=started.run_id, phase="", severity="info",
+        data={"path": resolved_instructions.path, "truncated": resolved_instructions.truncated},
+    ))
     state.runs[started.run_id] = handle  # so advance/status/etc. resolve this run
     if not defer:
         manager.run_until_pause(started.run_id)
     return started
+
+
+def _find_run_workspace(state, run_id: str) -> str | None:
+    """Locate the workspace whose checkpoint container holds ``run_id``.
+
+    Checks the server root first, then each isolated ``runs/<date>-<slug>/``
+    workspace beneath it. Returns None when the run is unknown everywhere.
+    """
+    from anvil_runtime.state.checkpoint_store import CheckpointStore
+
+    candidates = [pathlib.Path(state.workspace_root)]
+    runs_dir = pathlib.Path(state.workspace_root) / "runs"
+    if runs_dir.is_dir():
+        candidates.extend(p for p in sorted(runs_dir.iterdir()) if p.is_dir())
+    for root in candidates:
+        if CheckpointStore(root).load_run_state(run_id) is not None:
+            return str(root)
+    return None
+
+
+@router.post("/{run_id}/resume", response_model=RunStateResponse)
+def resume(
+    run_id: str,
+    http_request: Request,
+    defer: bool = False,
+    workspace: str | None = None,
+) -> RunStateResponse:
+    """``POST /v1/runs/{run_id}/resume`` — restore a run from its checkpoint.
+
+    Rebuilds the run's manager after a server restart (rehydrating gates,
+    complexity tier, and completed phases from ``.anvil/run-state.json``),
+    re-validates checkpoints, and — unless ``defer=true`` — advances to the
+    next pause point. ``workspace`` pinpoints a client-chosen root the server
+    cannot discover by scanning its own ``runs/``.
+    """
+    state = http_request.app.state
+    handle = state.runs.get(run_id)
+    if handle is None:
+        workspace_root = workspace or _find_run_workspace(state, run_id)
+        if workspace_root is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No persisted state found for run '{run_id}'",
+            )
+        if workspace_root == state.workspace_root:
+            handle = state.default_handle
+        else:
+            from anvil_runtime.app import RunHandle, build_manager
+
+            resolved = resolve_instructions(workspace_root, state.workspace_root)
+            manager, bus = build_manager(
+                workspace_root, state.execution_mode, state.config,
+                state.secret_adapter, instructions=resolved.text,
+            )
+            handle = RunHandle(manager, bus, workspace_root)
+    try:
+        handle.manager.resume_run(run_id)
+    except KeyError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No persisted state found for run '{run_id}'",
+        )
+    state.runs[run_id] = handle
+    if not defer:
+        handle.manager.run_until_pause(run_id)
+    return _to_state_response(handle.manager.get_progress(run_id))
 
 
 @router.post("/{run_id}/advance", response_model=RunStateResponse)
@@ -136,10 +275,35 @@ def approve(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"Unknown run '{run_id}'"
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     # Only a granted approval clears the pause and lets the run proceed.
     if decision.approved:
         manager.run_until_pause(run_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/{run_id}/clarify", response_model=RunStateResponse)
+def clarify(
+    run_id: str,
+    body: ClarifyRequest,
+    manager: DevelopmentManager = Depends(get_run_manager),
+) -> RunStateResponse:
+    """``POST /v1/runs/{run_id}/clarify`` — answer intake questions (#15).
+
+    Appends the answers to the run's domain-knowledge file and resumes the run
+    (intake re-runs once in assumption mode, then the pipeline proceeds).
+    """
+    try:
+        manager.submit_clarification(run_id, body.answers)
+    except KeyError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Unknown run '{run_id}'"
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    progress = manager.run_until_pause(run_id)
+    return _to_state_response(progress)
 
 
 @router.post("/{run_id}/override", response_model=OverrideResult)

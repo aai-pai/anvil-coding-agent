@@ -14,7 +14,9 @@ param(
     [ValidateSet("real", "offline-llm", "stub")]
     [string]$Mode = "real",
     [int]$Port = 8765,
-    [string]$Model = "deepseek/deepseek-chat"
+    # Leave empty to use Anvil's phase-aware defaults (Gemma 4 for planning/design,
+    # DeepSeek V4 for coding). Pass -Model to force a single model for every phase.
+    [string]$Model = ""
 )
 $ErrorActionPreference = "Stop"
 $repo = (Resolve-Path "$PSScriptRoot\..").Path
@@ -26,11 +28,15 @@ if ($Mode -eq "real" -and -not $env:OPENROUTER_API_KEY) {
 
 New-Item -ItemType Directory -Force -Path $Workspace | Out-Null
 $env:ANVIL_EXECUTION_MODE = $Mode
-$env:ANVIL_MODEL = $Model
+# Only force a single model when -Model is given; otherwise clear ANVIL_MODEL so the
+# runtime's phase-aware defaults (Gemma 4 / DeepSeek V4) drive routing (#12).
+if ($Model) { $env:ANVIL_MODEL = $Model }
+else { Remove-Item Env:\ANVIL_MODEL -ErrorAction SilentlyContinue }
 $env:PYTHONPATH = "$repo\runtime"
 Set-Location $Workspace
 
+$modelLabel = if ($Model) { $Model } else { "phase-aware defaults (Gemma 4 / DeepSeek V4)" }
 Write-Host "Anvil runtime -> http://127.0.0.1:$Port" -ForegroundColor Cyan
-Write-Host "  mode=$Mode  model=$Model  workspace=$Workspace" -ForegroundColor DarkGray
+Write-Host "  mode=$Mode  model=$modelLabel  workspace=$Workspace" -ForegroundColor DarkGray
 Write-Host "  (leave this window open; press Ctrl+C to stop)`n" -ForegroundColor DarkGray
 python -m uvicorn anvil_runtime.app:app --host 127.0.0.1 --port $Port

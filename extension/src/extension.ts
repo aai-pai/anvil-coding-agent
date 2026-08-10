@@ -9,6 +9,7 @@ import * as vscode from "vscode";
 
 import { AnvilChatParticipant } from "./chat/participant";
 import { API_BASE_URL } from "./config/modeSelector";
+import { redactSecrets } from "./secrets/redactionClient";
 import { SecretStore } from "./secrets/secretStore";
 import { ExtensionLogger } from "./telemetry/extensionLogger";
 import { StatusBar } from "./ui/statusBar";
@@ -28,12 +29,14 @@ export function activate(context: vscode.ExtensionContext): void {
   const handler: vscode.ChatRequestHandler = async (request, _ctx, stream) => {
     // Build into the folder the user has open in VS Code, when there is one.
     const workspace = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    // Everything rendered in chat passes the redaction rules first — runtime
+    // error bodies can quote request payloads that carry secret-shaped text.
     const response = await participant.handleRequest(
       request.prompt,
       { requesterId: "vscode-user", workspace },
-      (message) => stream.progress(message), // live per-phase progress
+      (message) => stream.progress(redactSecrets(message)),
     );
-    stream.markdown(response.markdown);
+    stream.markdown(redactSecrets(response.markdown));
     if (participant.currentRunId) {
       try {
         statusBar.update(await client.getRun(participant.currentRunId));

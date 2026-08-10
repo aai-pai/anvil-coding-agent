@@ -20,6 +20,8 @@ from anvil_runtime.llm.openrouter_provider import (
     OfflineTransport,
     OpenRouterProvider,
 )
+from anvil_runtime.llm.model_router import ModelRouter
+from anvil_runtime.llm.usage_tracker import UsageTracker
 from anvil_runtime.sdk.openhands_adapter import LLMBackend, OpenHandsAdapter
 from anvil_runtime.sdk.session_bridge import SessionBridge
 from anvil_runtime.security.secret_adapter import SecretAdapter
@@ -92,6 +94,51 @@ def test_llm_backend_writes_validated_document(tmp_path: pathlib.Path) -> None:
     assert result.valid is True
 
 
+# -- Unusable completions fail the step (never placeholder "success") -------
+
+
+class _CannedProvider:
+    """Provider stand-in returning a fixed completion."""
+
+    def __init__(self, content: str, finish_reason: str | None = None) -> None:
+        from anvil_runtime.llm.openrouter_provider import CompletionResponse
+
+        self._response = CompletionResponse(
+            model="m", content=content, usage={"total_tokens": 1},
+            finish_reason=finish_reason,
+        )
+
+    def complete(self, req: CompletionRequest):
+        return self._response
+
+
+def test_empty_llm_response_fails_doc_phase(tmp_path: pathlib.Path) -> None:
+    backend = LLMBackend(_CannedProvider(""), str(tmp_path))
+    bridge = SessionBridge(
+        adapter=OpenHandsAdapter(backend=backend), workspace_root=str(tmp_path)
+    )
+    event = bridge.execute_phase(build_invocation_payload(PHASE_CONTRACTS["proposal"]))
+    assert event.status == "failure"
+    assert "empty" in (event.failure_reason or "")
+    assert not (tmp_path / "docs" / "proposal.md").exists()  # nothing written
+
+
+def test_truncated_llm_response_fails_code_phase(tmp_path: pathlib.Path) -> None:
+    backend = LLMBackend(
+        _CannedProvider("=== FILE: src/main.py ===\nprint(", finish_reason="length"),
+        str(tmp_path),
+    )
+    bridge = SessionBridge(
+        adapter=OpenHandsAdapter(backend=backend), workspace_root=str(tmp_path)
+    )
+    event = bridge.execute_phase(
+        build_invocation_payload(PHASE_CONTRACTS["implementation"])
+    )
+    assert event.status == "failure"
+    assert "truncated" in (event.failure_reason or "")
+    assert not (tmp_path / "src" / "main.py").exists()  # partial file not written
+
+
 # -- Full supervisor run with real pipeline (offline transport) -------------
 
 
@@ -121,6 +168,38 @@ def test_supervisor_real_pipeline_writes_and_validates_all_phases(tmp_path: path
     assert (tmp_path / "docs" / "architecture.md").is_file()
     # No validation failures were raised during the run.
     assert not any(e.eventType == "ArtifactValidationFailed" for e in bus.read_all())
+
+
+def test_routing_and_usage_events_carry_run_id(tmp_path: pathlib.Path) -> None:
+    # FR-EVT-001/002: across a real (offline) run, ModelRouteSelected and
+    # TokenUsageReported carry the active, non-empty run id.
+    bus = EventBus(str(tmp_path))
+    provider = OpenRouterProvider(
+        secret_adapter=SecretAdapter(provided_key="k"), transport=OfflineTransport()
+    )
+    bridge = SessionBridge(
+        adapter=OpenHandsAdapter(backend=LLMBackend(provider, str(tmp_path))),
+        model_router=ModelRouter(event_bus=bus),
+        usage_tracker=UsageTracker(event_bus=bus),
+        workspace_root=str(tmp_path),
+    )
+    manager = DevelopmentManager(
+        workspace_root=str(tmp_path),
+        event_bus=bus,
+        executor=BridgeExecutor(bridge),
+        artifact_validator=ArtifactValidator(workspace_root=str(tmp_path), event_bus=bus),
+    )
+    started = manager.start_run(RunStartRequest(mode="yolo", security_profile="open"))
+    manager.run_until_pause(started.run_id)
+
+    telemetry = [
+        e for e in bus.read_all()
+        if e.eventType in ("ModelRouteSelected", "TokenUsageReported")
+    ]
+    assert telemetry  # routing/usage events were emitted
+    assert any(e.eventType == "ModelRouteSelected" for e in telemetry)
+    assert all(e.runId == started.run_id for e in telemetry)
+    assert started.run_id  # non-empty
 
 
 def test_invalid_artifact_fails_phase(tmp_path: pathlib.Path) -> None:

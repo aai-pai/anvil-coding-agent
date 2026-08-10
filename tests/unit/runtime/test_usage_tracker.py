@@ -49,3 +49,13 @@ def test_emits_token_usage_reported(tmp_path: pathlib.Path) -> None:
     assert events
     assert events[-1].data["over_budget"] is True
     assert events[-1].severity == "warning"
+
+
+def test_record_event_carries_passed_run_id(tmp_path: pathlib.Path) -> None:
+    # FR-EVT-001/002: a run_id passed to record() labels the event, overriding
+    # the constructor's run_id.
+    bus = EventBus(str(tmp_path))
+    tracker = UsageTracker(event_bus=bus, run_id="ctor")
+    tracker.record("implementation", {"total_tokens": 10}, run_id="run-xyz")
+    events = [e for e in bus.read_all() if e.eventType == "TokenUsageReported"]
+    assert events and events[-1].runId == "run-xyz"

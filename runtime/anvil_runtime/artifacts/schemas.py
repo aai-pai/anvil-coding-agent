@@ -71,4 +71,25 @@ def schema_for(phase_id: str) -> ArtifactSchema | None:
     return ARTIFACT_SCHEMAS.get(phase_id)
 
 
-__all__ = ["ArtifactSchema", "ARTIFACT_SCHEMAS", "schema_for"]
+# #16 (FR-OKF-001): OKF `type` per phase artifact. OKF mandates only that a
+# `type` frontmatter field exists; the taxonomy is the producer's to define.
+OKF_TYPES: dict[str, str] = {
+    "proposal": "Proposal",
+    "specification": "Specification",
+    "architecture": "Architecture",
+    "blueprint": "Blueprint",
+    "dev-plan": "Development Plan",
+    "qa": "QA Test Plan",
+    "packaging": "Packaging Plan",
+    "documentation": "Documentation Plan",
+    "deployment": "Deployment Plan",
+    "cleanup": "Phase Summary Log",
+}
+
+
+def okf_type_for(phase_id: str) -> str:
+    """The OKF ``type`` for a phase's artifact; title-cased phase id fallback."""
+    return OKF_TYPES.get(phase_id, phase_id.replace("-", " ").title())
+
+
+__all__ = ["ArtifactSchema", "ARTIFACT_SCHEMAS", "schema_for", "OKF_TYPES", "okf_type_for"]

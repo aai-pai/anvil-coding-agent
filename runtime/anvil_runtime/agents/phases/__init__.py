@@ -15,12 +15,14 @@ from anvil_runtime.agents.phases.dev_plan_agent import DevPlanAgent
 from anvil_runtime.agents.phases.documentation_agent import DocumentationAgent
 from anvil_runtime.agents.phases.factory_init_agent import FactoryInitAgent
 from anvil_runtime.agents.phases.implementation_agent import ImplementationAgent
+from anvil_runtime.agents.phases.intake_agent import IntakeAgent
 from anvil_runtime.agents.phases.packaging_agent import PackagingAgent
 from anvil_runtime.agents.phases.proposal_agent import ProposalAgent
 from anvil_runtime.agents.phases.qa_agent import QAAgent
 from anvil_runtime.agents.phases.specification_agent import SpecificationAgent
 
 __all__ = [
+    "IntakeAgent",
     "ProposalAgent",
     "FactoryInitAgent",
     "SpecificationAgent",

@@ -57,8 +57,25 @@ describe("parseCommand: build", () => {
     });
   });
 
-  it("falls back to help when no description is given", () => {
-    expect(parseCommand("build")).toEqual({ kind: "help" });
+  it("returns an empty description for a bare build (file-based flow, FR-SRC-005)", () => {
+    expect(parseCommand("build")).toEqual({ kind: "build", description: "" });
+  });
+});
+
+describe("parseCommand: answer", () => {
+  it("captures the raw answer text (FR-INT-012)", () => {
+    expect(parseCommand("answer yes, localStorage; plain HTML")).toEqual({
+      kind: "answer",
+      text: "yes, localStorage; plain HTML",
+    });
+  });
+
+  it("accepts the clarify alias and falls back to help when empty", () => {
+    expect(parseCommand("clarify use sqlite")).toEqual({
+      kind: "answer",
+      text: "use sqlite",
+    });
+    expect(parseCommand("answer")).toEqual({ kind: "help" });
   });
 });
 
@@ -99,6 +116,13 @@ describe("parseCommand: overrides", () => {
       kind: "override",
       action: "force-advance",
       reason: "trust me",
+    });
+  });
+
+  it("does not treat bare `advance` as a gate-bypassing override", () => {
+    expect(parseCommand("advance")).toEqual({
+      kind: "unknown",
+      input: "advance",
     });
   });
 });

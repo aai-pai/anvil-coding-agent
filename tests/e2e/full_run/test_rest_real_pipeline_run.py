@@ -32,7 +32,7 @@ def test_yolo_run_produces_real_artifacts(client: TestClient, tmp_path: pathlib.
 
     state = client.get(f"/v1/runs/{run_id}").json()
     assert state["status"] == "completed"
-    assert len(state["completed_phases"]) == 12
+    assert len(state["completed_phases"]) == 13
 
     # Real artifacts were written to the workspace through the pipeline.
     assert (tmp_path / "docs" / "proposal.md").is_file()

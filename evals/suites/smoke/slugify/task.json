@@ -1,0 +1,6 @@
+{
+  "id": "slugify",
+  "title": "URL slug generator",
+  "expected_complexity": ["simple"],
+  "tags": ["python", "library", "simple"]
+}

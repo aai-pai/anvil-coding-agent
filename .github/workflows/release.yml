@@ -1,0 +1,70 @@
+name: release
+
+# Tag a release to publish it:
+#   git tag v0.1.5 && git push origin v0.1.5
+# The tag must match the version in runtime/pyproject.toml and
+# extension/package.json, or the first step fails before anything is built.
+on:
+  push:
+    tags: ["v*"]
+  # Lets you rehearse the build (artifacts only, no GitHub Release) by hand.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: build and publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+
+      # Gate first: never build artifacts for a tag that disagrees with source.
+      - name: Verify versions match the tag
+        if: github.event_name == 'push'
+        run: python scripts/check_versions.py "${GITHUB_REF_NAME}"
+
+      - name: Verify versions agree (manual run, no tag)
+        if: github.event_name == 'workflow_dispatch'
+        run: python scripts/check_versions.py
+
+      - name: Install runtime + dev dependencies
+        run: pip install -e "runtime[dev]"
+      - name: Run test suite
+        run: pytest -q
+
+      - name: Build runtime wheel and sdist
+        run: |
+          pip install build
+          python -m build runtime --outdir dist
+
+      - name: Build extension
+        working-directory: extension
+        run: |
+          npm ci
+          npm run build
+          npm test
+          npx --yes @vscode/vsce package \
+            --out "../dist/anvil-extension-${GITHUB_REF_NAME#v}.vsix"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: anvil-${{ github.ref_name }}
+          path: dist/*
+
+      - name: Create GitHub Release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" dist/* --generate-notes --verify-tag

@@ -23,6 +23,7 @@ export type ChatCommand =
       extraGates: string[];
     }
   | { kind: "build"; description: string }
+  | { kind: "answer"; text: string }
   | { kind: "approve"; comments?: string }
   | { kind: "deny"; comments?: string }
   | { kind: "status" }
@@ -58,10 +59,16 @@ export function parseCommand(raw: string): ChatCommand {
     case "build":
     case "make":
     case "create": {
+      // #17 (FR-SRC-005): an empty description means "build from the open
+      // folder's domain-knowledge/background-information.md".
       const description = rest.join(" ").trim();
-      return description
-        ? { kind: "build", description }
-        : { kind: "help" };
+      return { kind: "build", description };
+    }
+    case "answer":
+    case "clarify": {
+      // #15 (FR-INT-012): answers to intake questions, separated by `;`.
+      const text = rest.join(" ").trim();
+      return text ? { kind: "answer", text } : { kind: "help" };
     }
     case "approve":
     case "yes":
@@ -89,9 +96,10 @@ export function parseCommand(raw: string): ChatCommand {
         targetPhase: rest[0],
         reason: joinOrUndefined(rest.slice(1)) ?? "user rollback",
       };
+    // Note: no bare `advance` alias — this override bypasses a pending
+    // approval gate, so the command must be explicit about forcing.
     case "force":
     case "force-advance":
-    case "advance":
       return {
         kind: "override",
         action: "force-advance",

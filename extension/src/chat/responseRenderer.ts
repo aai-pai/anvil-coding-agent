@@ -32,10 +32,16 @@ export function renderRunState(state: RunStateResponse): string {
   if (state.pending_approval_gate) {
     lines.push(`- ⏸ Awaiting approval: **${state.pending_approval_gate}**`);
   }
+  if (state.pending_questions && state.pending_questions.length > 0) {
+    lines.push("- ❓ Anvil needs clarification — reply with `answer <a1>; <a2>; …`:");
+    for (const question of state.pending_questions) {
+      lines.push(`  1. ${question}`);
+    }
+  }
   return lines.join("\n");
 }
 
-const TOTAL_PHASES = 12;
+const TOTAL_PHASES = 13;
 
 /** A short, live one-line progress message for a run in flight (Level 2). */
 export function renderProgress(state: RunStateResponse): string {
@@ -45,6 +51,9 @@ export function renderProgress(state: RunStateResponse): string {
   }
   if (state.pending_approval_gate) {
     return `Anvil: paused for approval — ${state.pending_approval_gate}`;
+  }
+  if (state.status === "awaiting_clarification") {
+    return "Anvil: paused — needs clarification (see questions below)";
   }
   if (state.status === "escalated") {
     return `Anvil: escalated at ${state.current_phase ?? "?"}`;
@@ -70,8 +79,10 @@ export function renderHelp(): string {
   return [
     "**Anvil commands**",
     "- `build <description>` — build something from a plain-English description (e.g. `build a CLI that converts Celsius to Fahrenheit`)",
+    "- `build` — build from the open folder's `domain-knowledge/background-information.md`",
     "- `start [mode] [profile] [gates…]` — begin a run from the domain-knowledge file (e.g. `start secure restricted`)",
     "- `status` — show the current run state",
+    "- `answer <a1>; <a2>; …` — answer Anvil's clarifying questions",
     "- `approve [comment]` / `deny [comment]` — resolve the pending gate",
     "- `rollback <phase> [reason]` — roll back to a phase",
     "- `force-advance [reason]` / `stop [reason]` — override the supervisor",

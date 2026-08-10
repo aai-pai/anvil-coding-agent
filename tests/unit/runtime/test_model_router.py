@@ -18,6 +18,22 @@ from anvil_runtime.policy.models import PolicyDocument
 from anvil_runtime.state.event_bus import EventBus
 
 
+def test_default_slugs_are_real_openrouter_ids() -> None:
+    # FR-RT-001: pinned, valid OpenRouter slugs (no placeholders).
+    assert DEFAULT_PLANNING_MODEL == "google/gemma-4-31b-it"
+    assert DEFAULT_CODING_MODEL == "deepseek/deepseek-v4-flash"
+
+
+def test_select_event_carries_passed_run_id(tmp_path: pathlib.Path) -> None:
+    # FR-EVT-001/002: a run_id passed to select() labels the emitted
+    # ModelRouteSelected event, overriding the constructor's run_id.
+    bus = EventBus(str(tmp_path))
+    router = ModelRouter(event_bus=bus, run_id="ctor")
+    router.select("proposal", "planning", run_id="run-xyz")
+    events = [e for e in bus.read_all() if e.eventType == "ModelRouteSelected"]
+    assert events and events[-1].runId == "run-xyz"
+
+
 def test_default_routing_by_subtask() -> None:
     router = ModelRouter()
     assert router.route("proposal", "planning") == DEFAULT_PLANNING_MODEL

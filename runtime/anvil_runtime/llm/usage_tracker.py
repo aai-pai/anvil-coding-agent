@@ -43,8 +43,14 @@ class UsageTracker:
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._usage: dict[str, PhaseUsage] = {}
 
-    def record(self, phase: str, usage: dict[str, int]) -> PhaseUsage:
-        """Add a usage delta for a phase and emit ``TokenUsageReported``."""
+    def record(
+        self, phase: str, usage: dict[str, int], run_id: str | None = None
+    ) -> PhaseUsage:
+        """Add a usage delta for a phase and emit ``TokenUsageReported``.
+
+        ``run_id`` (spec FR-EVT-002) labels the event with the active run; it falls
+        back to the constructor's ``run_id``.
+        """
         acc = self._usage.setdefault(phase, PhaseUsage(phase=phase))
         prompt = int(usage.get("prompt_tokens", 0))
         completion = int(usage.get("completion_tokens", 0))
@@ -53,7 +59,8 @@ class UsageTracker:
         acc.completion_tokens += completion
         acc.total_tokens += total
         over, limit = self.check_budget(phase)
-        self._emit("TokenUsageReported", phase, severity="warning" if over else "info", data={
+        self._emit("TokenUsageReported", phase, severity="warning" if over else "info",
+                   run_id=run_id, data={
             "total_tokens": acc.total_tokens,
             "budget": limit,
             "over_budget": over,
@@ -77,11 +84,12 @@ class UsageTracker:
     def all_usage(self) -> dict[str, PhaseUsage]:
         return dict(self._usage)
 
-    def _emit(self, event_type: str, phase: str, severity: str, data: dict) -> None:
+    def _emit(self, event_type: str, phase: str, severity: str, data: dict,
+              run_id: str | None = None) -> None:
         if self._events is None:
             return
         self._events.emit(EventEnvelope(
-            timestamp=self._clock(), eventType=event_type, runId=self._run_id,
+            timestamp=self._clock(), eventType=event_type, runId=run_id or self._run_id,
             phase=phase, severity=severity, data=data,
         ))
 

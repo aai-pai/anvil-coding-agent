@@ -18,6 +18,7 @@ from anvil_runtime.agents.phases import (
     DocumentationAgent,
     FactoryInitAgent,
     ImplementationAgent,
+    IntakeAgent,
     PackagingAgent,
     ProposalAgent,
     QAAgent,
@@ -26,6 +27,7 @@ from anvil_runtime.agents.phases import (
 
 # Phase ID -> concrete agent class. Keys are the kebab-case phase IDs.
 _AGENT_CLASSES: dict[str, type[BasePhaseAgent]] = {
+    "intake": IntakeAgent,
     "proposal": ProposalAgent,
     "factory-init": FactoryInitAgent,
     "specification": SpecificationAgent,

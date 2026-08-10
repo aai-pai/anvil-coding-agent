@@ -14,6 +14,8 @@ from anvil_runtime.artifacts.validator import ArtifactValidator
 from anvil_runtime.state.event_bus import EventBus
 
 VALID_PROPOSAL = """---
+type: Proposal
+title: Proposal — test
 artifactId: proposal-v1
 phase: proposal
 generatedAt: 2026-05-31T00:00:00Z

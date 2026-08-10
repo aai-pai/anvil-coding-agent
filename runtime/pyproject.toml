@@ -4,9 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "anvil-runtime"
-version = "0.1.0"
+version = "0.1.4"
 description = "Anvil localhost runtime service: supervisor-orchestrated coding factory built on OpenHands + OpenRouter."
-readme = "../README.md"
 requires-python = ">=3.9"
 license = { text = "Proprietary" }
 authors = [{ name = "Anvil" }]
@@ -33,13 +32,8 @@ dev = [
 where = ["."]
 include = ["anvil_runtime*"]
 
-[tool.pytest.ini_options]
-# Tests live at the repo root under tests/; the runtime package is importable
-# because this project is installed (or runtime/ is on sys.path via conftest).
-testpaths = ["../tests"]
-python_files = ["test_*.py"]
-python_classes = ["Test*"]
-python_functions = ["test_*"]
+# pytest configuration lives in the repo-root pytest.ini (run pytest from the
+# repo root); a second copy here would silently diverge from it.
 
 [tool.coverage.run]
 source = ["anvil_runtime"]

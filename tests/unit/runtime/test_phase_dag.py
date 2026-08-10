@@ -11,15 +11,17 @@ from anvil_runtime.core.phase_dag import PhaseDAG
 def test_default_graph_is_linear_pipeline() -> None:
     dag = PhaseDAG()
     assert dag.phases == list(PHASE_IDS)
-    assert dag.dependencies_of("proposal") == []
+    assert dag.dependencies_of("intake") == []
+    assert dag.dependencies_of("proposal") == ["intake"]
     assert dag.dependencies_of("architecture") == ["specification"]
 
 
 def test_ready_and_next_phase_progress_serially() -> None:
     dag = PhaseDAG()
-    assert dag.ready_phases(set()) == ["proposal"]
-    assert dag.next_phase(set()) == "proposal"
-    assert dag.next_phase({"proposal"}) == "factory-init"
+    assert dag.ready_phases(set()) == ["intake"]
+    assert dag.next_phase(set()) == "intake"
+    assert dag.next_phase({"intake"}) == "proposal"
+    assert dag.next_phase({"intake", "proposal"}) == "factory-init"
     assert dag.next_phase(set(PHASE_IDS)) is None
 
 

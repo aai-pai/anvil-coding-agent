@@ -1,0 +1,6 @@
+{
+  "id": "todo-cli",
+  "title": "To-do list CLI with JSON persistence",
+  "expected_complexity": ["standard", "complex"],
+  "tags": ["python", "cli", "persistence", "standard"]
+}

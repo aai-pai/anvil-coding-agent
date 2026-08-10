@@ -27,6 +27,10 @@ class CompletionRequest(BaseModel):
     phase: str | None = None
     subtask: str | None = None
     max_tokens: int | None = None
+    # v0.1.3 follow-up: pinned sampling temperature. None (default) sends no
+    # temperature and keeps the provider's default sampling — the pre-knob
+    # behavior, byte-for-byte.
+    temperature: float | None = None
 
 
 class CompletionResponse(BaseModel):
@@ -35,6 +39,9 @@ class CompletionResponse(BaseModel):
     model: str
     content: str
     usage: dict[str, int] = Field(default_factory=dict)
+    # Provider-reported stop cause; "length" means the output was truncated at
+    # max_tokens and callers must not treat the content as complete.
+    finish_reason: str | None = None
 
 
 @runtime_checkable
@@ -92,6 +99,8 @@ class HttpxTransport:
         }
         if request.max_tokens is not None:
             payload["max_tokens"] = request.max_tokens
+        if request.temperature is not None:
+            payload["temperature"] = request.temperature
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
@@ -102,9 +111,19 @@ class HttpxTransport:
     def _post(self, url: str, payload: dict, headers: dict) -> dict:
         import time
 
+        import httpx  # a declared dependency; lazy to match _send
+
         last_response = None
         for attempt in range(self._max_retries + 1):
-            response = self._send(url, payload, headers)
+            try:
+                response = self._send(url, payload, headers)
+            except httpx.TransportError:
+                # Timeouts/connection blips are the most common transient
+                # failures — retry them like retryable statuses.
+                if attempt < self._max_retries:
+                    time.sleep(min(2 ** attempt, 8))
+                    continue
+                raise
             status = getattr(response, "status_code", 200)
             if status in self._RETRYABLE and attempt < self._max_retries:
                 last_response = response
@@ -127,14 +146,25 @@ class HttpxTransport:
 
     @staticmethod
     def _normalize(data: dict) -> dict[str, object]:
+        # OpenRouter reports upstream failures as an `error` body, sometimes
+        # with HTTP 200 — treating those as empty successes masks real errors.
+        error = data.get("error")
+        if error:
+            message = error.get("message") if isinstance(error, dict) else None
+            raise OpenRouterResponseError(
+                f"OpenRouter returned an error: {message or error}"
+            )
         choices = data.get("choices") or []
         content = ""
+        finish_reason = None
         if choices:
             message = choices[0].get("message") or {}
             content = message.get("content", "") or ""
+            finish_reason = choices[0].get("finish_reason")
         usage = data.get("usage") or {}
         return {
             "content": content,
+            "finish_reason": finish_reason,
             "usage": {
                 "prompt_tokens": int(usage.get("prompt_tokens", 0)),
                 "completion_tokens": int(usage.get("completion_tokens", 0)),
@@ -148,6 +178,10 @@ class HttpxTransport:
 
 class MissingApiKeyError(RuntimeError):
     """Raised when no OpenRouter key can be resolved (NFR-SC-001/002)."""
+
+
+class OpenRouterResponseError(RuntimeError):
+    """Raised when OpenRouter returns an error payload instead of a completion."""
 
 
 class OpenRouterProvider:
@@ -173,10 +207,17 @@ class OpenRouterProvider:
             )
         raw = self._transport.complete(req, api_key)
         usage = raw.get("usage", {}) if isinstance(raw, dict) else {}
+        finish = raw.get("finish_reason") if isinstance(raw, dict) else None
         return CompletionResponse(
             model=req.model,
             content=str(raw.get("content", "")) if isinstance(raw, dict) else "",
-            usage={k: int(v) for k, v in usage.items()} if isinstance(usage, dict) else {},
+            # Skip non-numeric entries (e.g. OpenRouter's nested
+            # prompt_tokens_details) instead of crashing on int().
+            usage=(
+                {k: int(v) for k, v in usage.items() if isinstance(v, (int, float))}
+                if isinstance(usage, dict) else {}
+            ),
+            finish_reason=str(finish) if finish is not None else None,
         )
 
 
@@ -188,5 +229,6 @@ __all__ = [
     "OfflineTransport",
     "HttpxTransport",
     "MissingApiKeyError",
+    "OpenRouterResponseError",
     "OPENROUTER_BASE_URL",
 ]

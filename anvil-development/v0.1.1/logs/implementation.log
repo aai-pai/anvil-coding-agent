@@ -1,0 +1,153 @@
+# Anvil v0.1.1 — Implementation Log
+
+## Slice 1 — Telemetry & routing (#12, #13)
+
+**Objective.** Real per-tier model defaults and a non-empty `runId` on every event.
+
+**Files modified.**
+- `runtime/anvil_runtime/llm/model_router.py` — default slugs now
+  `google/gemma-4-31b-it` (planning) and `deepseek/deepseek-v4-flash` (coding);
+  `select()` gains a `run_id` param threaded into the `ModelRouteSelected` emit.
+- `runtime/anvil_runtime/llm/usage_tracker.py` — `record()` gains a `run_id` param
+  threaded into the `TokenUsageReported` emit.
+- `runtime/anvil_runtime/sdk/session_bridge.py` — `execute_phase` reads
+  `payload.phase_context["run_id"]` and passes it to `select()` / `record()`.
+- `runtime/anvil_runtime/app.py` — `_build_real_manager` builds subtask overrides
+  only from explicitly-set env vars (a specific var wins over global `ANVIL_MODEL`);
+  otherwise the router's phase-aware defaults apply. Imports `SUBTASK_CATEGORIES`.
+
+**Tests added.**
+- `tests/unit/runtime/test_model_router.py` — `test_default_slugs_are_real_openrouter_ids`,
+  `test_select_event_carries_passed_run_id`.
+- `tests/unit/runtime/test_usage_tracker.py` — `test_record_event_carries_passed_run_id`.
+- `tests/integration/runtime/test_real_execution_pipeline.py` —
+  `test_routing_and_usage_events_carry_run_id` (all routing/usage events in a run
+  carry the active run id).
+
+**Test results.** `pytest` — 222 passed (0 failures), first attempt.
+
+**Drift check.** Matches blueprint §5 (#12) and §6 (#13); no drift, no extra surface.
+
+**Status.** ✅ COMPLETED — tests green on attempt 1.
+
+## Slice 2 — Section-specific documents (#10)
+
+**Objective.** Stop the document writer repeating the full body under every section.
+
+**Files modified.**
+- `runtime/anvil_runtime/sdk/openhands_adapter.py` — `LLMBackend._document` writes the
+  body once; adds a placeholder (`_See above._`) only for required-section headings the
+  model omitted. New `_has_heading` mirrors the validator's heading check.
+
+**Tests added.**
+- `tests/unit/runtime/test_document_writer.py` — body written once (no duplication),
+  missing sections get placeholders, present sections kept (not duplicated), generated
+  doc passes the artifact validator.
+
+**Test results.** `pytest` — 226 passed (0 failures), first attempt.
+
+**Drift check.** Matches blueprint §3; no drift.
+
+**Status.** ✅ COMPLETED — tests green on attempt 1.
+
+## Slice 3 — Per-run workspace isolation (#9)
+
+**Objective.** Every `build` run executes in an isolated `runs/<date>-<slug>/`.
+
+**Files added/modified.**
+- `runtime/anvil_runtime/api/run_workspace.py` (new) — `slug()` and
+  `resolve_run_workspace()` (creates `<base>/runs/<date>-<slug>/`, collision suffix).
+- `runtime/anvil_runtime/api/routes_runs.py` — `start_run` isolates a `build` run
+  (task supplied) under `runs/<date>-<slug>/` and writes the prompt there; a `start`
+  run (no task) uses the prepared workspace as-is (FR-RUN-004). Per-run manager rooted
+  at the run workspace.
+
+**Tests added/updated.**
+- `tests/unit/runtime/test_run_workspace.py` (new) — slug, dated workspace, collision.
+- `tests/e2e/per_run_isolation/test_per_run_isolation.py` (new) — fresh build with
+  unrelated base artifacts → isolated run workspace, pre-existing artifacts untouched
+  (regression for FR-001).
+- `tests/integration/api/test_runs_endpoints.py` — two pre-existing tests updated to
+  assert the new isolation behavior (task lands under `runs/<slug>/`, not the root).
+
+**Test results.** `pytest` — 231 passed (0 failures), first attempt.
+
+**Drift check.** Matches blueprint §2; FR-RUN-004 (`start` uses prepared workspace)
+reconciled. No drift.
+
+**Status.** ✅ COMPLETED — tests green on attempt 1.
+
+## Slice 4 — Complexity-gated phase selection (#11)
+
+**Objective.** Auxiliary phases run only when the assessed task complexity warrants.
+
+**Files modified.**
+- `runtime/anvil_runtime/core/phase_contracts.py` — `PhaseCompleteEvent.complexity_tier`.
+- `runtime/anvil_runtime/config/schema.py` — `EffectiveConfig.complexityTier` override
+  (FR-CX-006).
+- `runtime/anvil_runtime/sdk/openhands_adapter.py` — `StepResult.complexity_tier`;
+  proposal prompt requests a trailing `COMPLEXITY:` line; `_run_doc` + new
+  `_extract_tier` parse and strip it.
+- `runtime/anvil_runtime/sdk/session_bridge.py` — propagate the tier onto the event.
+- `runtime/anvil_runtime/core/development_manager.py` — `_GATED_BY_TIER` +
+  `excluded_for_tier`; `_RunContext.excluded`; `_record_success` sets the active set
+  after proposal and emits `ComplexityAssessed`; `step`/`_progress` select via
+  `next_phase(completed | excluded)`.
+
+**Design note (refines blueprint §4.1).** Absent/unparseable tier → `None` → no
+gating (fail-open). Stub executor emits no tier, so stub/offline runs stay at all 12
+phases (backward compatible); gating activates only on a real assessed tier or a
+config override. Blueprint §4.1 updated to match.
+
+**Tests added.**
+- `tests/unit/runtime/test_complexity_gate.py` — tier→excluded mapping (incl.
+  None/unknown → no gating), `_extract_tier` parse/strip/absent.
+- `tests/integration/phase_flow/test_gated_phase_selection.py` — simple→core only,
+  standard→+qa, complex→12, no-tier→12, config override wins; `ComplexityAssessed`
+  emitted.
+
+**Test results.** `pytest` — 240 passed (0 failures), first attempt.
+
+**Drift check.** Matches blueprint §1/§4 (with the §4.1 default refinement noted). No
+drift.
+
+**Status.** ✅ COMPLETED — tests green on attempt 1.
+
+## Slice 5 — Failure-record (FR) reporting (feature)
+
+**Objective.** Write an FR-001/002-style record per phase failure.
+
+**Files added/modified.**
+- `runtime/anvil_runtime/core/failure_record.py` (new) — `render_fr` (deterministic
+  FR layout) and `write_fr` (`docs/failure_records/FR-<NNN>-<slug>.md`, sequenced).
+- `runtime/anvil_runtime/core/development_manager.py` — `_handle_failure` builds one
+  packet and calls `_write_failure_record` on EVERY failure (recovered or escalated);
+  the same packet is reused for escalation. Exec mode read from
+  `ANVIL_EXECUTION_MODE`; write errors are swallowed so diagnostics never break a run.
+
+**Tests added.**
+- `tests/unit/runtime/test_failure_record.py` — render layout/fields/run id;
+  `write_fr` sequences FR-001 then FR-002.
+- `tests/integration/phase_flow/test_failure_record_written.py` — an induced
+  validation failure escalates and writes `docs/failure_records/FR-001-*.md` carrying
+  the run id and `proposal`.
+
+**Test results.** `pytest` — 243 passed (0 failures), first attempt.
+
+**Drift check.** Matches blueprint §7; supervisor-owned record (FR-ROLE-001). No drift.
+
+**Status.** ✅ COMPLETED — tests green on attempt 1.
+
+---
+
+## Final review
+
+- Full suite: **243 passed**, 0 failures.
+- All six v0.1.1 changes (#9–#13 + complexity gating + FR reporting) implemented across
+  5 slices, each with unit/integration/e2e coverage per the plan.
+- Drift check: implementation matches spec/architecture/blueprint; the only refinement
+  (Slice 4 absent-tier default → no gating) is reflected back into blueprint §4.1.
+- Representative offline run covered by `test_supervisor_real_pipeline_*` and the
+  per-run-isolation e2e (offline-llm) — artifacts written + validated, events carry the
+  run id.
+- Runtime-only; the VS Code extension is unchanged.

@@ -25,10 +25,10 @@ from anvil_runtime.policy.engine import PolicyEngine
 from anvil_runtime.policy.rule_evaluator import PolicyActionContext
 from anvil_runtime.state.event_bus import EventBus
 
-# Default model identifiers (FR-ML-003). Slugs follow the policy examples'
-# convention (e.g. "deepseek-coder", spec §4.3) for AllowedModels coherence.
-DEFAULT_PLANNING_MODEL = "gemma-4"
-DEFAULT_CODING_MODEL = "deepseek-coder"
+# Default model identifiers (spec v0.1.1 FR-RT-001). Real OpenRouter slugs:
+# reasoning-optimized Gemma 4 for planning/design, cheap DeepSeek V4 for coding.
+DEFAULT_PLANNING_MODEL = "google/gemma-4-31b-it"
+DEFAULT_CODING_MODEL = "deepseek/deepseek-v4-flash"
 
 SUBTASK_CATEGORIES: tuple[str, ...] = (
     "planning",
@@ -99,8 +99,14 @@ class ModelRouter:
             return subtask_default
         return _phase_default(phase_id)
 
-    def select(self, phase_id: str, subtask: str) -> ModelRouteDecision:
-        """Route then enforce policy, remediating a forbidden model (FR-ML-004/006)."""
+    def select(
+        self, phase_id: str, subtask: str, run_id: str | None = None
+    ) -> ModelRouteDecision:
+        """Route then enforce policy, remediating a forbidden model (FR-ML-004/006).
+
+        ``run_id`` (spec FR-EVT-002) labels the emitted ``ModelRouteSelected`` event
+        with the active run; it falls back to the constructor's ``run_id``.
+        """
         model = self.route(phase_id, subtask)
         justification = f"default routing for {subtask} in {phase_id}"
         remediated = False
@@ -126,7 +132,7 @@ class ModelRouter:
                         else "model not permitted by policy"
                     )
 
-        self._emit("ModelRouteSelected", phase_id, data={
+        self._emit("ModelRouteSelected", phase_id, run_id=run_id, data={
             "subtask": subtask,
             "model": model,
             "justification": justification,
@@ -138,11 +144,12 @@ class ModelRouter:
             justification=justification, remediated=remediated, allowed=allowed,
         )
 
-    def _emit(self, event_type: str, phase: str, data: dict | None = None) -> None:
+    def _emit(self, event_type: str, phase: str, data: dict | None = None,
+              run_id: str | None = None) -> None:
         if self._events is None:
             return
         self._events.emit(EventEnvelope(
-            timestamp=self._clock(), eventType=event_type, runId=self._run_id,
+            timestamp=self._clock(), eventType=event_type, runId=run_id or self._run_id,
             phase=phase, severity="info", data=data or {},
         ))
 

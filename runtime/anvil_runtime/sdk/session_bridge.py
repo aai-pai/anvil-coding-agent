@@ -42,7 +42,24 @@ class SessionBridge:
     ) -> PhaseCompleteEvent:
         """Run a phase payload and return its :class:`PhaseCompleteEvent`."""
         phase = payload.phase_name
-        decision = self._router.select(phase, subtask)
+        # The supervisor passes the active run id via phase_context (FR-EVT-002);
+        # thread it through routing + usage so their events carry the run id.
+        run_id = ""
+        if isinstance(payload.phase_context, dict):
+            run_id = str(payload.phase_context.get("run_id", "") or "")
+        decision = self._router.select(phase, subtask, run_id=run_id)
+        if not decision.allowed:
+            # FR-ML-004: a policy denial without a remediation replacement must
+            # fail the phase — proceeding would call the forbidden model.
+            return PhaseCompleteEvent(
+                phase_name=phase,
+                status="failure",
+                duration_ms=0,
+                failure_reason=(
+                    f"model '{decision.model}' denied by policy: "
+                    f"{decision.justification}"
+                ),
+            )
         cfg = AgentRuntimeConfig(
             model=decision.model,
             security_profile=self._profile,
@@ -55,10 +72,11 @@ class SessionBridge:
             subtask=subtask,
             output_paths=list(payload.output_paths),
             input_files=list(payload.input_files),
+            context=dict(payload.phase_context),
         )
         result = self._adapter.run_phase_step(session_id, step)
         if self._usage is not None and result.usage:
-            self._usage.record(phase, result.usage)
+            self._usage.record(phase, result.usage, run_id=run_id)
         return PhaseCompleteEvent(
             phase_name=phase,
             status=result.status,
@@ -67,6 +85,11 @@ class SessionBridge:
             duration_ms=0,
             token_usage=result.usage or None,
             failure_reason=result.failure_reason,
+            complexity_tier=result.complexity_tier,
+            questions=list(result.questions),
+            assumptions=list(result.assumptions),
+            # #24: unit-mode progress marker rides the completion contract.
+            phase_complete=result.phase_complete,
         )
 
 

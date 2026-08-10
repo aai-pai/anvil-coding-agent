@@ -40,6 +40,7 @@ const TERMINAL_STATUSES = new Set([
   "escalated",
   "stopped",
   "awaiting_approval",
+  "awaiting_clarification",
 ]);
 
 export class AnvilChatParticipant {
@@ -111,13 +112,36 @@ export class AnvilChatParticipant {
       }
       case "build": {
         // Conversational flow: the task comes straight from chat. The runtime
-        // writes it to domain-knowledge, then runs autonomously (yolo/open),
-        // building into the open VS Code folder when there is one.
+        // writes it to domain-knowledge in an isolated run workspace, and the
+        // run starts in gated mode so the intake step may pause once with
+        // clarifying questions (answered via `answer <a1>; <a2>`) before
+        // building without further gates. With no description (#17,
+        // FR-SRC-005), the open folder's
+        // domain-knowledge/background-information.md is the intent file.
+        let intent: { task?: string; source_path?: string };
+        let label: string;
+        if (command.description) {
+          intent = { task: command.description };
+          label = `🛠️ Building: _${command.description}_`;
+        } else {
+          if (!context.workspace) {
+            return (
+              "⚠️ `build` without a description needs an open folder containing " +
+              "`domain-knowledge/background-information.md`."
+            );
+          }
+          const sourcePath = `${context.workspace}/domain-knowledge/background-information.md`;
+          intent = { source_path: sourcePath };
+          label = `🛠️ Building from \`${sourcePath}\``;
+        }
         const { started, state } = await this.runWithProgress(
           {
-            mode: "yolo",
+            // Gated (not yolo) so intake can ask once when the request is
+            // underspecified; gated mode adds no approval gates of its own,
+            // so a complete request still builds straight through.
+            mode: "gated",
             security_profile: "open",
-            task: command.description,
+            ...intent,
             workspace: context.workspace,
           },
           progress
@@ -126,7 +150,7 @@ export class AnvilChatParticipant {
           ? `\n📁 into \`${context.workspace}\``
           : "";
         return (
-          `🛠️ Building: _${command.description}_${where}\n\n` +
+          `${label}${where}\n\n` +
           `${renderRunStarted(started)}\n\n${renderRunState(state)}`
         );
       }
@@ -134,11 +158,26 @@ export class AnvilChatParticipant {
         const runId = this.requireRun();
         return renderRunState(await this.client.getRun(runId));
       }
+      case "answer": {
+        // #15 (FR-INT-012): forward answers to /clarify; `;` separates answers.
+        const runId = this.requireRun();
+        const answers = command.text
+          .split(";")
+          .map((part) => part.trim())
+          .filter((part) => part.length > 0);
+        const state = await this.client.clarify(runId, { answers });
+        return renderRunState(state);
+      }
       case "approve":
       case "deny": {
         const runId = this.requireRun();
         const state = await this.client.getRun(runId);
-        const gate = state.pending_approval_gate ?? "";
+        const gate = state.pending_approval_gate;
+        if (!gate) {
+          // Never submit an empty-gate decision: the runtime treats an
+          // approval as "resume", so a stray `yes`/`no` must be a no-op.
+          return `No approval is pending — the run is **${state.status}**.`;
+        }
         await this.client.approve(runId, {
           gateId: gate,
           gateName: gate,

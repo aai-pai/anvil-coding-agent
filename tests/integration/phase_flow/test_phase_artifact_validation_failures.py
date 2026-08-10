@@ -16,6 +16,8 @@ from anvil_runtime.core.phase_contracts import PHASE_CONTRACTS
 from anvil_runtime.state.event_bus import EventBus
 
 GOOD_ARCH = """---
+type: Architecture
+title: Architecture — test
 artifactId: architecture-v1
 phase: architecture
 generatedAt: 2026-05-31T00:00:00Z
@@ -70,7 +72,8 @@ def test_multiple_phase_documents(workspace: pathlib.Path) -> None:
         ("deployment", "docs/deployment-plan.md"),
     ]:
         (workspace / path).write_text(
-            f"---\nartifactId: {phase}-v1\nphase: {phase}\ngeneratedAt: t\n"
+            f"---\ntype: Plan\ntitle: {phase} plan\n"
+            f"artifactId: {phase}-v1\nphase: {phase}\ngeneratedAt: t\n"
             f"derivedFrom: [docs/architecture.md]\n---\n# {phase}\nbody\n",
             encoding="utf-8",
         )

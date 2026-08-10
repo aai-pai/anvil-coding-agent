@@ -27,7 +27,7 @@ def test_secure_run_pauses_at_each_mandatory_gate(tmp_path: pathlib.Path) -> Non
     p = mgr.run_until_pause(run_id)
     assert p.status == "awaiting_approval"
     assert p.pending_approval_gate == "post-proposal"
-    assert p.completed_phases == ["proposal"]
+    assert p.completed_phases == ["intake", "proposal"]
 
     # Pause 2: post-architecture.
     _approve(mgr, run_id, "post-proposal")
@@ -72,4 +72,4 @@ def test_denied_approval_keeps_run_paused(tmp_path: pathlib.Path) -> None:
     # Still gated: re-running does not advance past the unapproved gate.
     p = mgr.run_until_pause(started.run_id)
     assert p.pending_approval_gate == "post-proposal"
-    assert p.completed_phases == ["proposal"]
+    assert p.completed_phases == ["intake", "proposal"]

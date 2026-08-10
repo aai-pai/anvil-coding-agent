@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 # ---------------------------------------------------------------------------
 
 PHASE_IDS: tuple[str, ...] = (
+    "intake",
     "proposal",
     "factory-init",
     "specification",
@@ -67,6 +68,15 @@ class PhaseContract(BaseModel):
 # Per-phase contracts derived from proposal §9. Output paths follow the
 # documentation-first scope (no build/ or deployment/ execution outputs).
 PHASE_CONTRACTS: dict[str, PhaseContract] = {
+    # #15 (FR-INT-001): dedicated completeness check before proposal. Its only
+    # writable output is the domain-knowledge file itself (append-only usage:
+    # recorded assumptions in autonomous runs).
+    "intake": PhaseContract(
+        phase_id="intake",
+        agent_name="intake_agent",
+        input_files=["domain-knowledge/background-information.md"],
+        allowed_outputs=["domain-knowledge/background-information.md"],
+    ),
     "proposal": PhaseContract(
         phase_id="proposal",
         agent_name="proposal_agent",
@@ -173,6 +183,17 @@ class PhaseCompleteEvent(BaseModel):
     duration_ms: int
     token_usage: dict[str, int] | None = None
     failure_reason: str | None = None
+    # #11: the proposal phase reports an assessed complexity tier here
+    # (simple|standard|complex); other phases leave it None.
+    complexity_tier: str | None = None
+    # #15 (FR-INT-005/010): the intake phase reports clarifying questions
+    # (interactive round 1) or recorded assumptions; other phases leave them empty.
+    questions: list[str] = Field(default_factory=list)
+    assumptions: list[str] = Field(default_factory=list)
+    # v0.1.4 #24 (FR-AG-002): False marks a successful *unit* of a phase
+    # still in progress (one artifact / one repair round); the supervisor
+    # records progress and re-dispatches instead of completing the phase.
+    phase_complete: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -201,6 +222,25 @@ class RunState(BaseModel):
     completed_phases: list[dict[str, object]] = Field(default_factory=list)
     stale_phases: list[str] = Field(default_factory=list)
     retry_counters: dict[str, int] = Field(default_factory=dict)
+    # Orchestration metadata a resume must rehydrate: without it a resumed
+    # secure run would silently lose its mandatory gates and complexity tier.
+    pre_gates: dict[str, str] = Field(default_factory=dict)
+    post_gates: dict[str, str] = Field(default_factory=dict)
+    approved_gates: list[str] = Field(default_factory=list)
+    excluded_phases: list[str] = Field(default_factory=list)
+    clarification_round: int = 0
+    # An active pause survives a restart: a post-gate is only checked in the
+    # step that completes its phase, so an unpersisted pause would be skipped.
+    pending_gate: str | None = None
+    pending_questions: list[str] = Field(default_factory=list)
+    # v0.1.3 #20: once intake finishes, the task-contract block is sealed
+    # (ContractSealed) and later writes are rejected; a resume must rehydrate
+    # the seal or a restarted run could mutate binding facts mid-pipeline.
+    contract_sealed: bool = False
+    # v0.1.4 #24 (FR-AG-003): mid-phase progress — phase id -> artifacts
+    # already generated — so a restart resumes from the last completed
+    # artifact instead of regenerating the phase from scratch.
+    phase_progress: dict[str, list[str]] = Field(default_factory=dict)
 
 
 __all__ = [

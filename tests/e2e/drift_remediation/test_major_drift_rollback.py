@@ -27,7 +27,7 @@ def test_major_drift_rolls_back_and_reexecutes(tmp_path: pathlib.Path) -> None:
     )
     progress = manager.run_until_pause(started.run_id)
     assert progress.status == "completed"
-    assert len(progress.completed_phases) == 12
+    assert len(progress.completed_phases) == 13
 
     # 2. Drift check finds a missing blueprint module (major).
     report = DriftChecker(event_bus=bus, run_id=started.run_id).check(
@@ -57,7 +57,7 @@ def test_major_drift_rolls_back_and_reexecutes(tmp_path: pathlib.Path) -> None:
     # 5. Re-execution re-completes the run.
     final = manager.run_until_pause(started.run_id)
     assert final.status == "completed"
-    assert len(final.completed_phases) == 12
+    assert len(final.completed_phases) == 13
 
     types = {e.eventType for e in bus.read_all()}
     assert "DriftCheckResult" in types

@@ -20,6 +20,43 @@ from pydantic import BaseModel, Field
 DEFAULT_MODE = "gated"
 DEFAULT_SECURITY_PROFILE = "restricted"
 DEFAULT_MAX_RETRIES_PER_PHASE = 2
+# #18 (spec FR-CTX-001): per-file character cap applied when phase inputs are
+# assembled into an LLM prompt; env override ANVIL_INPUT_CHAR_LIMIT.
+DEFAULT_INPUT_CHAR_LIMIT = 20_000
+# v0.1.3 #19: per-step-category completion token budgets (the output-side
+# mirror of #18 — a too-small budget fails the step with finish_reason=length
+# and the task can never fit). Env overrides ANVIL_INTAKE_MAX_TOKENS /
+# ANVIL_DOC_MAX_TOKENS / ANVIL_CODE_MAX_TOKENS. Defaults preserve the v0.1.2
+# hardcoded values.
+DEFAULT_INTAKE_MAX_TOKENS = 400
+DEFAULT_DOC_MAX_TOKENS = 1_500
+DEFAULT_CODE_MAX_TOKENS = 4_000
+# v0.1.3 #20: hard cap on the task-contract block. The contract is injected
+# VERBATIM into every phase prompt and is exempt from ANVIL_INPUT_CHAR_LIMIT,
+# so it is never truncated — an over-cap contract fails the run at intake
+# instead (a clipped contract is worse than none). Env override
+# ANVIL_CONTRACT_MAX_CHARS.
+DEFAULT_CONTRACT_MAX_CHARS = 16_000
+# v0.1.4 #23: bounded external-test repair loop. No command configured means
+# no execution ever (v0.1.3 behavior byte-for-byte). Env overrides
+# ANVIL_TEST_COMMAND / ANVIL_REPAIR_MAX_ROUNDS / ANVIL_TEST_TIMEOUT_S.
+DEFAULT_REPAIR_MAX_ROUNDS = 2
+DEFAULT_TEST_TIMEOUT_S = 600
+# v0.1.4 #25: where the external-test command runs. `local` is the host
+# subprocess runner (open profile only); `docker` runs it in a hardened
+# container (copy-in/copy-out, no network after setup) and is the only
+# executor accepted under restricted/strict profiles. Env overrides
+# ANVIL_TEST_EXECUTOR / ANVIL_TEST_IMAGE / ANVIL_TEST_SETUP_COMMAND.
+DEFAULT_TEST_EXECUTOR = "local"
+DEFAULT_TEST_IMAGE = "python:3.11-slim"
+TEST_EXECUTORS: tuple[str, ...] = ("local", "docker")
+TestExecutorLiteral = Literal["local", "docker"]
+# v0.1.4 #27: repair-prompt context. `interfaces` (default) injects the
+# AST interface map of the passing artifacts (functional-harmony
+# constraint); `minimal` restores the #23-as-first-shipped prompts —
+# the ablation lever. Env override ANVIL_REPAIR_CONTEXT.
+DEFAULT_REPAIR_CONTEXT = "interfaces"
+RepairContextLiteral = Literal["interfaces", "minimal"]
 DEFAULT_MCP_DISCOVERY_TIMEOUT_SECONDS = 5
 DEFAULT_ARTIFACT_VALIDATION_TIMEOUT_SECONDS = 30
 DEFAULT_DRIFT_CHECK_TIMEOUT_SECONDS = 60
@@ -66,15 +103,56 @@ class EffectiveConfig(BaseModel):
     requiredApprovalGates: list[str] = Field(default_factory=list)
     mcpServers: list[dict[str, object]] = Field(default_factory=list)
     securityProfile: SecurityProfileLiteral = DEFAULT_SECURITY_PROFILE
+    # #11 (FR-CX-006): optional complexity-tier override; when set it wins over the
+    # proposal phase's assessed tier. None defers to the proposal's assessment.
+    complexityTier: str | None = None
+    # #18 (FR-CTX-001): per-file input character limit for prompt assembly.
+    inputCharLimit: int = DEFAULT_INPUT_CHAR_LIMIT
+    # v0.1.3 #19: completion token budgets per step category.
+    intakeMaxTokens: int = DEFAULT_INTAKE_MAX_TOKENS
+    docMaxTokens: int = DEFAULT_DOC_MAX_TOKENS
+    codeMaxTokens: int = DEFAULT_CODE_MAX_TOKENS
+    # v0.1.3 #20: never-truncate cap for the task-contract block.
+    contractMaxChars: int = DEFAULT_CONTRACT_MAX_CHARS
+    # Pinned sampling temperature for all completions (env ANVIL_TEMPERATURE).
+    # None sends no temperature: the provider default, the historical
+    # behavior. Pin low (e.g. 0) for reproducible measurement runs.
+    temperature: float | None = None
+    # v0.1.4 #23 (FR-RL-001): user-supplied verification command, run in the
+    # run workspace after implementation; failures drive bounded per-artifact
+    # repair. None -> the loop does not exist for this run.
+    externalTestCommand: str | None = None
+    repairMaxRounds: int = DEFAULT_REPAIR_MAX_ROUNDS
+    testTimeoutS: int = DEFAULT_TEST_TIMEOUT_S
+    # v0.1.4 #25 (FR-DX-001): docker-isolated test execution. `docker` is
+    # required for the repair loop under any profile other than `open`;
+    # setup (e.g. `pip install -e . pytest`) runs once per container, with
+    # network — test rounds run disconnected.
+    testExecutor: TestExecutorLiteral = DEFAULT_TEST_EXECUTOR
+    testImage: str = DEFAULT_TEST_IMAGE
+    testSetupCommand: str | None = None
+    # v0.1.4 #27 (FR-IC-004): interface-aware repair context gate.
+    repairContext: RepairContextLiteral = DEFAULT_REPAIR_CONTEXT
 
 
 __all__ = [
     "DEFAULT_MODE",
     "DEFAULT_SECURITY_PROFILE",
     "DEFAULT_MAX_RETRIES_PER_PHASE",
+    "DEFAULT_INPUT_CHAR_LIMIT",
+    "DEFAULT_INTAKE_MAX_TOKENS",
+    "DEFAULT_DOC_MAX_TOKENS",
+    "DEFAULT_CODE_MAX_TOKENS",
+    "DEFAULT_CONTRACT_MAX_CHARS",
     "DEFAULT_MCP_DISCOVERY_TIMEOUT_SECONDS",
     "DEFAULT_ARTIFACT_VALIDATION_TIMEOUT_SECONDS",
     "DEFAULT_DRIFT_CHECK_TIMEOUT_SECONDS",
+    "DEFAULT_TEST_EXECUTOR",
+    "DEFAULT_TEST_IMAGE",
+    "TEST_EXECUTORS",
+    "TestExecutorLiteral",
+    "DEFAULT_REPAIR_CONTEXT",
+    "RepairContextLiteral",
     "RUNTIME_API_VERSION_PREFIX",
     "EVENTS_LOG_PATH",
     "RUN_SUMMARY_LOG_PATH",

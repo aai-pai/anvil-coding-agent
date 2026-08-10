@@ -69,3 +69,55 @@ def test_event_bus_without_redactor_is_unchanged(tmp_path: pathlib.Path) -> None
         phase="", data={"token": "kept"},
     ))
     assert bus.read_all()[0].data["token"] == "kept"
+
+
+def test_redacts_json_quoted_keys_and_quoted_values() -> None:
+    r = Redactor()
+    # The exact shape of a secret inside an LLM prompt/response event.
+    out = r.redact_text('{"api_key": "AKIAIOSFODNN7EXAMPLE"}')
+    assert "AKIAIOSFODNN7EXAMPLE" not in out
+    assert '"api_key"' in out  # key label preserved
+    out = r.redact_text("{'password': 'hunter2'}")
+    assert "hunter2" not in out
+    # A quoted multi-word value is redacted whole, not just its first word.
+    out = r.redact_text('password = "my secret phrase"')
+    assert "secret phrase" not in out
+
+
+def test_redacts_well_known_token_shapes() -> None:
+    r = Redactor()
+    assert "ghp_" not in r.redact_text("pushed with ghp_abcdefghijklmnopqrstu012345")
+    assert "AKIA" not in r.redact_text("aws AKIAIOSFODNN7EXAMPLE used")
+    assert "xoxb-" not in r.redact_text("slack xoxb-1234567890-abcdef")
+    assert REDACTION_PLACEHOLDER in r.redact_text("Authorization: Basic dXNlcjpwYXNz")
+    pem = "-----BEGIN RSA PRIVATE KEY-----\nMIIE...\n-----END RSA PRIVATE KEY-----"
+    assert "MIIE" not in r.redact_text(pem)
+
+
+def test_numeric_token_telemetry_is_not_redacted() -> None:
+    # total_tokens / tokenBudgetPerPhase are accounting, not secrets — blanking
+    # them would destroy the audit trail's usage data (and change field types).
+    r = Redactor()
+    out = r.redact_mapping({
+        "total_tokens": 1234,
+        "tokenBudgetPerPhase": {"qa": 5},
+        "token": "supersecret",  # string under a sensitive key still goes
+    })
+    assert out["total_tokens"] == 1234
+    assert out["tokenBudgetPerPhase"] == {"qa": 5}
+    assert out["token"] == REDACTION_PLACEHOLDER
+
+
+def test_production_app_wires_a_redacting_bus(tmp_path: pathlib.Path) -> None:
+    # Assembly guard: the guarantees above only hold if create_app/build_manager
+    # actually attach a redactor (they historically did not).
+    from anvil_runtime.app import build_manager, create_app
+    from anvil_runtime.security.secret_adapter import SecretAdapter
+
+    app = create_app(workspace_root=str(tmp_path))
+    assert app.state.event_bus._redactor is not None  # noqa: SLF001
+
+    _, bus = build_manager(
+        str(tmp_path), "offline-llm", None, SecretAdapter(provided_key="k")
+    )
+    assert bus._redactor is not None  # noqa: SLF001

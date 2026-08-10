@@ -14,12 +14,16 @@ import yaml
 from pydantic import BaseModel, Field
 
 # Core required fields (FR-AR-005): identity, phase, timestamp, and input lineage.
-REQUIRED_METADATA_FIELDS: tuple[str, ...] = ("artifactId", "phase", "generatedAt")
+# v0.1.2 #16 (FR-OKF-002) adds the OKF interoperability surface: `type` (the only
+# field the OKF spec itself mandates) and `title`.
+REQUIRED_METADATA_FIELDS: tuple[str, ...] = (
+    "artifactId", "phase", "generatedAt", "type", "title",
+)
 LINEAGE_FIELDS: tuple[str, ...] = ("derivedFrom", "inputHashes")
 
 
 class ArtifactMetadata(BaseModel):
-    """Parsed front-matter lineage for an artifact."""
+    """Parsed front-matter lineage + OKF surface for an artifact."""
 
     artifactId: str
     phase: str
@@ -27,6 +31,13 @@ class ArtifactMetadata(BaseModel):
     derivedFrom: list[str] = Field(default_factory=list)
     inputHashes: dict[str, str] = Field(default_factory=dict)
     runId: str | None = None
+    # OKF standard fields (#16): only `type` is mandated by the OKF spec; the
+    # rest are its standard optional fields.
+    type: str | None = None
+    title: str | None = None
+    description: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    timestamp: str | None = None
 
 
 def split_front_matter(text: str) -> tuple[dict, str]:

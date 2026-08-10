@@ -29,7 +29,7 @@ class ArtifactIssue(BaseModel):
     """A single deterministic validation failure."""
 
     path: str
-    kind: str  # "missing" | "empty" | "metadata" | "section"
+    kind: str  # "missing" | "empty" | "metadata" | "section" | "contract"
     detail: str
 
 
@@ -73,6 +73,12 @@ class ArtifactValidator:
         else:
             issues.extend(self._validate_document(schema))
 
+        # v0.1.3 #21: the generated code is checked mechanically against the
+        # task contract's manifest (when one is pinned). Deterministic AST
+        # checks, no LLM — violations fail the phase into the retry path.
+        if phase_id == "implementation":
+            issues.extend(self._validate_contract_manifest())
+
         result = ArtifactValidationResult(
             phase=phase_id, valid=not issues, issues=issues
         )
@@ -110,6 +116,35 @@ class ArtifactValidator:
                     detail=f"missing required section '{heading}'",
                 ))
         return issues
+
+    def _validate_contract_manifest(self) -> list[ArtifactIssue]:
+        """Check ``src/`` against the contract's manifest (#21), if any.
+
+        A prose-only contract (or no contract at all) validates as today; a
+        malformed manifest fence fails loudly rather than silently skipping
+        the mechanical check.
+        """
+        from anvil_runtime.contract import (
+            DOMAIN_KNOWLEDGE_REL,
+            parse_contract_manifest,
+            resolve_contract,
+            validate_manifest,
+        )
+
+        resolved = resolve_contract(self._root)
+        if not resolved.present:
+            return []
+        manifest, error = parse_contract_manifest(resolved.text)
+        if error is not None:
+            return [ArtifactIssue(
+                path=DOMAIN_KNOWLEDGE_REL, kind="contract", detail=error
+            )]
+        if manifest is None:
+            return []
+        return [
+            ArtifactIssue(path="src/", kind="contract", detail=violation)
+            for violation in validate_manifest(manifest, self._root / "src")
+        ]
 
     def _emit_failure(self, result: ArtifactValidationResult) -> None:
         if self._events is None:
