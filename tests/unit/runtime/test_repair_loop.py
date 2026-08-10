@@ -452,6 +452,19 @@ def test_missing_report_degrades_to_basename_with_warning(
     assert "clusters" not in started[0].data
 
 
+def test_repair_prompts_are_persisted_verbatim(tmp_path: pathlib.Path) -> None:
+    command = _stage_junit(tmp_path)
+    backend, provider, _bus = _backend(
+        tmp_path, [BAD_ALPHA, GOOD_BETA, GOOD_ALPHA], command)
+    result = _run_impl(backend)
+    assert result.status == "success"
+    prompt_files = sorted((tmp_path / "logs" / "repair-prompts").glob("*.md"))
+    assert [p.name for p in prompt_files] == ["001-src-alpha.py.md"]
+    # Byte-for-byte the prompt that was actually sent (requests[2] = repair).
+    assert prompt_files[0].read_text(encoding="utf-8") \
+        == provider.requests[2].prompt
+
+
 def test_docker_copies_report_out(tmp_path: pathlib.Path) -> None:
     _stage(tmp_path)
     command = "pytest tests -q --junitxml {junit_xml}"

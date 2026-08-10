@@ -209,6 +209,11 @@ red → the phase fails with the test output in the failure record.
   other generated files (signatures only, never bodies) so a fix keeps
   the passing code's contracts intact. `ANVIL_REPAIR_CONTEXT=minimal`
   disables it (ablation/debug).
+- **Prompt audit trail**: every repair prompt is persisted verbatim to
+  `<run>\logs\repair-prompts\NNN-<file>.md` in dispatch order — repair
+  prompts are assembled per file per round from moving parts (failure
+  clusters, interface map, current source), so this is the only faithful
+  record of what the model was asked.
 - **Where it runs** — `ANVIL_TEST_EXECUTOR` (config `testExecutor`):
   - `local` (default): unsandboxed subprocess in the run workspace —
     honored only for runs with `security_profile: open`; any other profile

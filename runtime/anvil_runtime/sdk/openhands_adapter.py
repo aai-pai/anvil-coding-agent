@@ -889,9 +889,10 @@ class LLMBackend:
         for index, rel in enumerate(files):
             self._emit_progress(step, rel, index, len(files), "repair")
             excerpt = (excerpts or {}).get(rel, failure_tail)
+            prompt = self._repair_prompt(step, rel, excerpt, artifacts)
+            self._persist_repair_prompt(rel, prompt)
             response = self._provider.complete(CompletionRequest(
-                model=model,
-                prompt=self._repair_prompt(step, rel, excerpt, artifacts),
+                model=model, prompt=prompt,
                 phase=step.phase, subtask=step.subtask,
                 max_tokens=self._code_max_tokens,
                 temperature=self._temperature,
@@ -906,6 +907,24 @@ class LLMBackend:
             target.write_text(self._strip_fences(response.content), encoding="utf-8")
             self._emit_artifact_usage(step, rel, dict(response.usage))
         return None
+
+    REPAIR_PROMPTS_REL = "logs/repair-prompts"
+
+    def _persist_repair_prompt(self, rel: str, prompt: str) -> None:
+        """Audit-trail the exact prompt of every repair completion.
+
+        Repair prompts are assembled per file per round from moving parts
+        (junit clusters, the sibling interface map, the file's current
+        source) — without persistence they are unreproducible after the
+        run. One file per completion under ``logs/repair-prompts/``,
+        sequence-numbered in dispatch order.
+        """
+        target_dir = self._root / self.REPAIR_PROMPTS_REL
+        target_dir.mkdir(parents=True, exist_ok=True)
+        sequence = len(list(target_dir.glob("*.md"))) + 1
+        safe = rel.replace("\\", "/").replace("/", "-")
+        (target_dir / f"{sequence:03d}-{safe}.md").write_text(
+            prompt, encoding="utf-8")
 
     def _repair_prompt(
         self, step: PhaseStep, rel: str, failure_tail: str,

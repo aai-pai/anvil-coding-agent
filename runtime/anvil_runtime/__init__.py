@@ -12,6 +12,6 @@ from their domain subpackages (``api``, ``core``, ``config``, ``policy``,
 
 from __future__ import annotations
 
-__version__ = "0.1.0"
+__version__ = "0.1.4"
 
 __all__ = ["__version__"]

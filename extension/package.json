@@ -2,7 +2,7 @@
   "name": "anvil-extension",
   "displayName": "Anvil",
   "description": "Anvil VS Code chat participant: thin client for the local Anvil runtime coding factory.",
-  "version": "0.1.2",
+  "version": "0.1.4",
   "publisher": "anvil",
   "private": true,
   "repository": {

@@ -81,6 +81,16 @@ recorded in [background-information.md](../domain-knowledge/background-informati
   `minimal` skips the block for ablation. Applies to compile-smoke
   repairs too. Write-set unchanged (FR-RL-008).
 
+### Repair-prompt persistence (post-measurement addition, 2026-07-25) — DONE
+
+- `_persist_repair_prompt` in `sdk/openhands_adapter.py`: every repair
+  completion's prompt is written verbatim to
+  `logs/repair-prompts/NNN-<file>.md` before the LLM call. Rationale:
+  repair prompts are assembled per file per round from moving parts
+  (junit clusters, sibling interface map, current source) and were
+  memory-only — unreproducible after the run. Observability only; no
+  prompt content change (measurement unaffected). Suite: **397**.
+
 ### #24 — Per-artifact advance granularity (FR-AG-001..004) — DONE
 
 - `PhaseProgress` events per artifact/repair stage (backend, FR-AG-001).

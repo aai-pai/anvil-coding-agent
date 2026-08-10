@@ -33,9 +33,22 @@ def test_slice1_module_imports(module_name: str) -> None:
 
 
 def test_package_version_exposed() -> None:
+    """``__version__`` must track pyproject.toml, not a hardcoded literal.
+
+    Pinning a literal here is what let the runtime sit at 0.1.0 through three
+    releases. Compared against the repo source rather than installed metadata
+    so a stale editable install does not turn this red;
+    scripts/check_versions.py covers the extension and the release tag.
+    """
+    import pathlib
+    import tomllib
+
     import anvil_runtime
 
-    assert anvil_runtime.__version__ == "0.1.0"
+    pyproject = pathlib.Path(__file__).resolve().parents[3] / "runtime" / "pyproject.toml"
+    declared = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]["version"]
+
+    assert anvil_runtime.__version__ == declared
 
 
 def test_headline_contracts_resolve() -> None:

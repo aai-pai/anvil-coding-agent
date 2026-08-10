@@ -5,7 +5,23 @@ on:
     branches: [main, "v*"]
   pull_request:
 
+# A new push to the same branch/PR makes the in-flight run obsolete.
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  checks:
+    name: repo checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Runtime and extension versions agree
+        run: python scripts/check_versions.py
+
   runtime:
     name: runtime (pytest)
     runs-on: ubuntu-latest
@@ -14,10 +30,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: runtime/pyproject.toml
       - name: Install runtime + dev dependencies
         run: pip install -e "runtime[dev]"
       - name: Run test suite
-        run: pytest -q
+        run: pytest -q --cov=anvil_runtime --cov-report=term-missing
 
   extension:
     name: extension (vitest + tsc)
@@ -38,3 +56,10 @@ jobs:
         run: npm run build
       - name: Run unit tests
         run: npm test
+      # Catches packaging breakage here rather than at tag time.
+      - name: Package extension (.vsix)
+        run: npx --yes @vscode/vsce package --out anvil-extension.vsix
+      - uses: actions/upload-artifact@v4
+        with:
+          name: anvil-extension-vsix
+          path: extension/anvil-extension.vsix
