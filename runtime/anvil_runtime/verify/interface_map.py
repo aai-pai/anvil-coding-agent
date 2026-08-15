@@ -17,6 +17,8 @@ from __future__ import annotations
 import ast
 import pathlib
 
+from pydantic import BaseModel, ConfigDict, Field
+
 INTERFACE_MAP_MAX_CHARS = 6_000
 
 
@@ -93,11 +95,98 @@ def _top_level_defs(tree: ast.Module) -> set[str]:
     return defs
 
 
+def _defined_names(tree: ast.Module) -> set[str]:
+    """Top-level AND class-level definition names (FR-FL-001).
+
+    Wider than :func:`_top_level_defs`, which feeds edge detection and must
+    stay export-shaped. Methods matter here because an assertion failure
+    names ``QueryInstance.is_cacheable`` far more often than it names the
+    module that defines it.
+    """
+    names: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.ClassDef):
+            names.add(node.name)
+            for item in node.body:
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    names.add(item.name)
+    return names
+
+
+class AstIndex(BaseModel):
+    """One AST pass per round, shared by #27, #28 and #29.
+
+    ``symbols`` maps a definition name to the artifact defining it (first
+    definer wins, artifacts walked in sorted order so ties are stable).
+    ``edges`` maps an artifact to the artifacts it references — its
+    *upstream* dependencies, which is the direction FR-FL-003 ranks by and
+    FR-DS-002 slices along. ``trees`` is carried so :func:`build` need not
+    re-parse; it is an in-process value, never serialized.
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    symbols: dict[str, str] = Field(default_factory=dict)
+    edges: dict[str, list[str]] = Field(default_factory=dict)
+    broken: list[str] = Field(default_factory=list)
+    trees: dict[str, ast.Module] = Field(default_factory=dict, repr=False)
+
+
+def _parse_file(base: pathlib.Path, rel: str) -> ast.Module | None:
+    target = base / rel
+    if not target.is_file():
+        return None
+    try:
+        return ast.parse(target.read_text(encoding="utf-8", errors="replace"))
+    except SyntaxError:
+        return None
+
+
+def index(root: str | pathlib.Path, artifacts: list[str]) -> AstIndex:
+    """Symbol index + dependency edges from a single pass over ``artifacts``.
+
+    A file that will not parse contributes no symbols and no edges, and is
+    listed in ``broken`` — never silently absent (FR-FL-001).
+    """
+    base = pathlib.Path(root)
+    rels = sorted(rel for rel in artifacts if rel.endswith(".py"))
+
+    trees: dict[str, ast.Module] = {}
+    broken: list[str] = []
+    for rel in rels:
+        tree = _parse_file(base, rel)
+        if tree is None:
+            broken.append(rel)
+        else:
+            trees[rel] = tree
+
+    symbols: dict[str, str] = {}
+    for rel in rels:
+        tree = trees.get(rel)
+        if tree is None:
+            continue
+        for name in sorted(_defined_names(tree)):
+            symbols.setdefault(name, rel)
+
+    exports = {rel: {_module_name(rel)} | _top_level_defs(tree)
+               for rel, tree in trees.items()}
+    edges: dict[str, list[str]] = {}
+    for rel, tree in trees.items():
+        used = _names_used(tree)
+        edges[rel] = sorted(other for other in trees
+                            if other != rel and (used & exports[other]))
+
+    return AstIndex(symbols=symbols, edges=edges, broken=broken, trees=trees)
+
+
 def build(
     root: str | pathlib.Path,
     artifacts: list[str],
     failing_rel: str,
     cap: int = INTERFACE_MAP_MAX_CHARS,
+    ast_index: AstIndex | None = None,
 ) -> str:
     """Connection-ranked, capped interface map of the OTHER artifacts.
 
@@ -105,6 +194,11 @@ def build(
     importing/referencing the failing file's module or defs; rank 2: rest.
     Cap overflow drops whole files from the tail with an omission note
     (FR-IC-002). Empty string when there is nothing to show.
+
+    ``ast_index`` is an optional prebuilt :func:`index` result; supplying it
+    reuses that round's parse instead of walking the artifacts again. The
+    output is identical either way — the parameter is a performance seam,
+    not a behavioral one.
     """
     base = pathlib.Path(root)
     siblings = [rel for rel in artifacts
@@ -112,15 +206,14 @@ def build(
     if not siblings:
         return ""
 
+    cached = ast_index.trees if ast_index is not None else {}
+
     def _parse(rel: str) -> ast.Module | None:
-        target = base / rel
-        if not target.is_file():
+        if rel in cached:
+            return cached[rel]
+        if ast_index is not None and rel in ast_index.broken:
             return None
-        try:
-            return ast.parse(target.read_text(encoding="utf-8",
-                                              errors="replace"))
-        except SyntaxError:
-            return None
+        return _parse_file(base, rel)
 
     failing_tree = _parse(failing_rel)
     failing_uses = _names_used(failing_tree) if failing_tree else set()
@@ -160,4 +253,4 @@ def build(
     return "\n\n".join(blocks)
 
 
-__all__ = ["build", "INTERFACE_MAP_MAX_CHARS"]
+__all__ = ["AstIndex", "build", "index", "INTERFACE_MAP_MAX_CHARS"]

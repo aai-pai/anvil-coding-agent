@@ -5,7 +5,7 @@ from __future__ import annotations
 import pathlib
 import textwrap
 
-from anvil_runtime.verify import build_interface_map
+from anvil_runtime.verify import build_ast_index, build_interface_map
 
 DATABASE = textwrap.dedent('''\
     """The database module."""
@@ -95,3 +95,91 @@ def test_no_siblings_returns_empty(tmp_path: pathlib.Path) -> None:
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "only.py").write_text("x = 1\n", encoding="utf-8")
     assert build_interface_map(tmp_path, ["src/only.py"], "src/only.py") == ""
+
+
+# --- v0.1.5 #28/#29: the shared AST index -----------------------------------
+
+
+def test_index_symbols_include_class_level_definitions(
+    tmp_path: pathlib.Path,
+) -> None:
+    """FR-FL-001: methods are indexed, not just top-level names.
+
+    An assertion failure names ``TinyDB.insert`` far more often than it
+    names the module that defines it — that is the whole reason symbol
+    matching localizes what basename matching cannot.
+    """
+    artifacts = _stage(tmp_path)
+    idx = build_ast_index(tmp_path, artifacts)
+
+    assert idx.symbols["TinyDB"] == "src/database.py"
+    assert idx.symbols["insert"] == "src/database.py"  # class-level
+    assert idx.symbols["Storage"] == "src/storage.py"
+    assert idx.symbols["write"] == "src/storage.py"  # class-level
+    assert idx.symbols["helper"] == "src/helpers.py"
+
+
+def test_index_edges_point_at_upstream_dependencies(
+    tmp_path: pathlib.Path,
+) -> None:
+    """FR-FL-003 ranks by this direction: database depends on storage."""
+    artifacts = _stage(tmp_path)
+    idx = build_ast_index(tmp_path, artifacts)
+
+    assert idx.edges["src/database.py"] == ["src/storage.py"]
+    assert idx.edges["src/storage.py"] == []
+    assert idx.edges["src/helpers.py"] == []
+
+
+def test_index_records_broken_files_rather_than_dropping_them(
+    tmp_path: pathlib.Path,
+) -> None:
+    artifacts = _stage(tmp_path)
+    (tmp_path / "src" / "helpers.py").write_text("def oops(:\n", encoding="utf-8")
+    idx = build_ast_index(tmp_path, artifacts)
+
+    assert idx.broken == ["src/helpers.py"]
+    assert "helper" not in idx.symbols
+    assert "src/helpers.py" not in idx.edges
+
+
+def test_index_first_definer_wins_and_is_stable(tmp_path: pathlib.Path) -> None:
+    """Artifacts are walked sorted, so a duplicated name resolves the same
+    way on every round."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "b_second.py").write_text("def shared():\n    ...\n", encoding="utf-8")
+    (src / "a_first.py").write_text("def shared():\n    ...\n", encoding="utf-8")
+    artifacts = ["src/b_second.py", "src/a_first.py"]
+
+    first = build_ast_index(tmp_path, artifacts)
+    second = build_ast_index(tmp_path, list(reversed(artifacts)))
+
+    assert first.symbols["shared"] == "src/a_first.py"
+    assert first.symbols == second.symbols
+
+
+def test_build_with_prebuilt_index_is_byte_identical(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The index is a performance seam, never a behavioral one."""
+    artifacts = _stage(tmp_path)
+    idx = build_ast_index(tmp_path, artifacts)
+
+    for failing in artifacts:
+        assert build_interface_map(
+            tmp_path, artifacts, failing, ast_index=idx
+        ) == build_interface_map(tmp_path, artifacts, failing)
+
+
+def test_build_with_prebuilt_index_still_marks_broken_siblings(
+    tmp_path: pathlib.Path,
+) -> None:
+    artifacts = _stage(tmp_path)
+    (tmp_path / "src" / "helpers.py").write_text("def oops(:\n", encoding="utf-8")
+    idx = build_ast_index(tmp_path, artifacts)
+
+    block = build_interface_map(
+        tmp_path, artifacts, "src/database.py", ast_index=idx
+    )
+    assert "## `src/helpers.py` (currently broken)" in block
