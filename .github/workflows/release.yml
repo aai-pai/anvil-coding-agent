@@ -63,8 +63,19 @@ jobs:
           name: anvil-${{ github.ref_name }}
           path: dist/*
 
-      - name: Create GitHub Release
+      # Idempotent on purpose: a release may already exist because it was drafted
+      # by hand in the web UI, or because this workflow is being re-run. Failing
+      # there would throw away artifacts that built successfully, so attach them
+      # to the existing release instead.
+      - name: Create or update GitHub Release
         if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" dist/* --generate-notes --verify-tag
+        run: |
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            echo "Release ${GITHUB_REF_NAME} already exists - attaching artifacts to it."
+            gh release upload "${GITHUB_REF_NAME}" dist/* --clobber
+          else
+            echo "Creating release ${GITHUB_REF_NAME}."
+            gh release create "${GITHUB_REF_NAME}" dist/* --generate-notes --verify-tag
+          fi
