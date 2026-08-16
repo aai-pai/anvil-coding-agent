@@ -67,7 +67,10 @@ def _build_real_manager(
 ) -> DevelopmentManager:
     """Assemble an LLM-backed supervisor (offline or real OpenRouter transport)."""
     from anvil_runtime.agents.phase_invocation import BridgeExecutor
-    from anvil_runtime.artifacts.validator import ArtifactValidator
+    from anvil_runtime.artifacts.validator import (
+        ArtifactValidator,
+        collect_count,
+    )
     from anvil_runtime.llm.model_router import ModelRouter, SUBTASK_CATEGORIES
     from anvil_runtime.llm.openrouter_provider import (
         HttpxTransport,
@@ -137,6 +140,8 @@ def _build_real_manager(
     # v0.1.5 #28 (FR-FL-007): fault-localization gate, same precedence.
     repair_localization = (
         os.environ.get("ANVIL_REPAIR_LOCALIZATION") or cfg.repairLocalization)
+    # v0.1.5 #30 (FR-QT-006): qa test-generation gate, same precedence.
+    qa_tests = os.environ.get("ANVIL_QA_TESTS") or cfg.qaTests
     backend = LLMBackend(
         provider, workspace_root, input_char_limit=input_char_limit, event_bus=bus,
         instructions=instructions,
@@ -153,6 +158,7 @@ def _build_real_manager(
         test_setup_command=test_setup_command,
         repair_context=repair_context,
         repair_localization=repair_localization,
+        qa_tests=qa_tests,
     )
     # FR-ML-004: a configured allowedModels list becomes an enforced whitelist
     # (with switch-to-allowed remediation); an empty list means unrestricted.
@@ -184,7 +190,12 @@ def _build_real_manager(
         config=cfg,
         event_bus=bus,
         executor=BridgeExecutor(bridge),
-        artifact_validator=ArtifactValidator(workspace_root, event_bus=bus),
+        artifact_validator=ArtifactValidator(
+            workspace_root, event_bus=bus,
+            # v0.1.5 #30 (FR-QT-004): prove the qa phase's tests collect —
+            # real runs only; offline writes placeholders by design.
+            qa_collect=(collect_count if execution_mode == "real" else None),
+        ),
         # Real retries must wait out the backoff (rate limits); offline-llm has
         # no provider to protect, and sleeping would only slow tests.
         retry_sleeper=time.sleep if execution_mode == "real" else None,

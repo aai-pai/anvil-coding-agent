@@ -1,8 +1,11 @@
 name: test
 
 on:
+  # PRs cover branch validation; a v* branch with an open PR would otherwise
+  # run every job twice (the push and pull_request events land in different
+  # concurrency groups, so neither cancels the other).
   push:
-    branches: [main, "v*"]
+    branches: [main]
   pull_request:
 
 # A new push to the same branch/PR makes the in-flight run obsolete.

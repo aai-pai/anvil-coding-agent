@@ -641,11 +641,12 @@ MULTI_JUNIT_SCRIPT = textwrap.dedent("""\
     report.parent.mkdir(parents=True, exist_ok=True)
     text = pathlib.Path("src/alpha.py").read_text(encoding="utf-8")
     if "FIXED" in text:
-        report.write_text("<testsuites><testsuite>"
+        report.write_text("<testsuites><testsuite tests='2' failures='0' "
+                          "errors='0' skipped='0'>"
                           "<testcase classname='t' name='ok'/>"
                           "</testsuite></testsuites>", encoding="utf-8")
         sys.exit(0)
-    report.write_text('''<testsuites><testsuite>
+    report.write_text('''<testsuites><testsuite tests="2" failures="1" errors="0" skipped="0">
     <testcase classname="tests.test_x" name="test_a">
     <failure message="AssertionError: alpha_marker got a bad value from beta_helper">
     tests/test_x.py:9: in test_a</failure></testcase>
@@ -721,3 +722,44 @@ def test_selection_completion_usage_is_accounted(
 
     # 2 generation + 1 selection + 1 repair completions, 7 tokens each.
     assert result.usage["total_tokens"] == 4 * 7
+
+
+def test_round_event_carries_pass_counts(tmp_path: pathlib.Path) -> None:
+    """FR-TM-001/002: v0.1.4 shipped exit code only, so its own acceptance
+    criterion (per-round pass counts monotone non-decreasing) could not be
+    evaluated. The series must now reconstruct from the event log alone."""
+    command = _stage_multi_junit(tmp_path)
+    backend, _provider, bus = _backend(
+        tmp_path, [ALPHA_DEP, BETA_HELPER, "src/alpha.py", ALPHA_DEP_FIXED],
+        command,
+    )
+
+    _run_impl(backend)
+
+    completed = [e for e in bus.events
+                 if e.eventType == "RepairRoundCompleted"
+                 and e.data.get("stage") != "compile"]
+    assert completed
+    data = completed[-1].data
+    assert data["tests_collected"] == 2
+    assert data["tests_passed"] == 2
+    assert data["tests_failed"] == 0
+    assert data["passed"] is True  # the pre-existing boolean is untouched
+
+
+def test_round_event_omits_counts_when_no_report(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Absent means unknown; a countless round must not read as zero passes."""
+    command = _stage(tmp_path)  # plain command, no {junit_xml} token
+    backend, _provider, bus = _backend(
+        tmp_path, [BAD_ALPHA, GOOD_BETA, GOOD_ALPHA], command,
+    )
+
+    _run_impl(backend)
+
+    completed = [e for e in bus.events
+                 if e.eventType == "RepairRoundCompleted"
+                 and e.data.get("stage") != "compile"]
+    assert completed
+    assert "tests_passed" not in completed[-1].data

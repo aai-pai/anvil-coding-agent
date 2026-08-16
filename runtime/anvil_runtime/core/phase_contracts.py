@@ -2,7 +2,7 @@
 
 Slice 1 deliverable. This module defines:
 
-* The canonical ordered list of twelve phase IDs (kebab-case per blueprint
+* The canonical ordered list of thirteen phase IDs (kebab-case per blueprint
   §6.3) and their per-phase input/output contracts (proposal §9).
 * The deterministic phase-invocation and phase-completion payloads exchanged
   between the supervisor and phase agents (blueprint §4.1).

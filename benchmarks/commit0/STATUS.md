@@ -1,6 +1,6 @@
 # Commit0 × Anvil — status, findings, and future work
 
-*Last updated: 2026-07-24. This document is the handoff record of the Commit0
+*Last updated: 2026-08-15. This document is the handoff record of the Commit0
 testing/fixing arc: what was built, what each run found, what was fixed, and
 what comes next. Read alongside [README.md](README.md) (usage) and
 [evals/README.md](../../evals/README.md) (the Tier-1 harness this builds on).*
@@ -145,13 +145,22 @@ failures were budget plumbing, contract transport, and skeleton-blindness.
 
 ## Immediate next step
 
-~~One fresh real run~~ **Done (2026-07-18): 24/201 (11.9%), see the run log
-above.** Both v0.1.3 acceptance measurements are complete (smoke 6/6 without
-instructions; tinydb one-shot baseline recorded). Next measurement is
-v0.1.4's: the #23 repair loop's delta over 11.9%, plus a re-run with the
-fixed graft in the loop (a fresh real run should now import without the
-rescore step). The honest-adapter budget is spent — remaining gaps are core
-work.
+**v0.1.4's measurement is complete** (2026-07-25): median 61/201 (30.3%)
+over the 24/201 baseline, distribution {47, 61, 134}, import-fail arm
+deleted. See the run log above.
+
+Next is **v0.1.5's**: the #28 fault-aware localization + #29 dependency-slice
+bundle, measured against the median 61 baseline under *identical* conditions
+(`open` profile, `local` executor, same instances, `qaTests=plan-only` so the
+new qa test generation cannot touch this surface). Ablation levers:
+`ANVIL_REPAIR_LOCALIZATION=basename` and `ANVIL_REPAIR_CONTEXT=interfaces`.
+
+The motivating finding, re-derived from the stored v0.1.4 reports: the loop
+was blind to the largest cluster in every round because assertion failures
+name symbols rather than files, and `tinydb/table.py` — implicated in 20 of
+28 recovered failures — was never once selected by hit count. A null result
+is a reportable outcome; recovery bounds what becomes *visible*, not what
+gets fixed.
 
 ## Future work
 

@@ -384,6 +384,10 @@ class DevelopmentManager:
             recent_events=[e.model_dump(mode="json") for e in self._events.stream(ctx.run_id)][-50:],
         )
         self._write_failure_record(ctx, packet)
+        # FR-FX-002: persist the budget with the failure that consumed it, so
+        # a restart mid-retry resumes with the attempts already spent.
+        self._checkpoints.save_run_meta(
+            ctx.run_id, retry_counters=self._retries.snapshot(ctx.run_id))
         if self._retries.should_retry(ctx.run_id, phase_id):
             return PhaseDispatchResult(
                 run_id=ctx.run_id, phase=phase_id, status="failure",
@@ -813,6 +817,9 @@ class DevelopmentManager:
         ctx.contract_sealed = state.contract_sealed
         # #24 (FR-AG-003): mid-phase unit progress survives a restart.
         ctx.phase_progress = {k: list(v) for k, v in state.phase_progress.items()}
+        # v0.1.5 FR-FX-002: so does the retry budget. Without this a restart
+        # handed every phase a fresh set of attempts.
+        self._retries.restore(run_id, dict(state.retry_counters))
         # A pause that was active at shutdown is restored, not skipped: a
         # post-gate is only ever checked in the step that completed its phase.
         if state.pending_gate and not self._gate_satisfied(ctx, state.pending_gate):
@@ -832,7 +839,10 @@ class DevelopmentManager:
             ctx.completed -= set(invalidated)
             self._emit(run_id, "ResumeValidationFailed", earliest_invalid,
                        severity="warning", data={"invalidated": invalidated})
-        resume_from = self._dag.next_phase(ctx.completed)
+        # FR-FX-001: exclusions count as done for scheduling — `step()` and
+        # `_progress()` both union them, so omitting them here reported a
+        # resume target the very next `step()` immediately skipped.
+        resume_from = self._dag.next_phase(ctx.completed | ctx.excluded)
         self._emit(run_id, "ResumeFromCheckpoint", resume_from or "", data={
             "completed": sorted(ctx.completed),
         })

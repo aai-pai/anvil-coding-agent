@@ -19,11 +19,18 @@ RUNTIME_NAME = "anvil-runtime"
 
 
 def build_checks() -> dict[str, str]:
-    """Per-subsystem readiness. Slice 5 flips the pending entries to live probes."""
+    """Per-subsystem readiness (FR-FX-004).
+
+    These read "pending" for releases after the work shipped, which made the
+    endpoint say less than nothing. Report what is true: the execution
+    adapter is wired and serving runs; MCP discovery is built and
+    unit-tested but never constructed by the application factory, so it is
+    ``not-wired`` rather than pending — a distinction a reader can act on.
+    """
     return {
         "config": "ok",
-        "mcp_discovery": "pending",  # Slice 5 (tools/mcp_manager)
-        "openhands": "pending",  # Slice 5 (sdk/openhands_adapter)
+        "mcp_discovery": "not-wired",  # tools/ is unwired; v0.1.6 activates it
+        "openhands": "ok",  # sdk/openhands_adapter backs every real run
     }
 
 

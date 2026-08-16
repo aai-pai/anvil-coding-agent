@@ -73,6 +73,53 @@ def _implicated_target(text: str, targets: list[str]) -> str | None:
     return found
 
 
+class FailureCounts(BaseModel):
+    """Per-round test totals (v0.1.5 #31, FR-TM-001)."""
+
+    passed: int = 0
+    failed: int = 0
+    collected: int = 0
+
+
+def try_parse_counts(path: str | pathlib.Path) -> FailureCounts | None:
+    """Round totals from a JUnit report; ``None`` when unknown.
+
+    ``None`` is not zero. v0.1.4 shipped `RepairRoundCompleted` with the
+    exit code only, so FR-RL-010's "pass movement where parseable" was
+    never checkable and its acceptance criterion could not be evaluated.
+    A round with no report must read as *unknown*, never as a regression
+    to zero passes.
+
+    pytest writes the totals on ``<testsuite>``; some producers put them on
+    a ``<testsuites>`` root instead, so both are accepted.
+    """
+    target = pathlib.Path(path)
+    if not target.is_file():
+        return None
+    try:
+        root = ET.fromstring(target.read_text(encoding="utf-8",
+                                              errors="replace"))
+    except ET.ParseError:
+        return None
+    node = root if root.get("tests") is not None else root.find("testsuite")
+    if node is None or node.get("tests") is None:
+        return None
+
+    def _int(name: str) -> int:
+        try:
+            return int(node.get(name) or 0)
+        except ValueError:
+            return 0
+
+    collected = _int("tests")
+    failed = _int("failures") + _int("errors")
+    return FailureCounts(
+        passed=max(collected - failed - _int("skipped"), 0),
+        failed=failed,
+        collected=collected,
+    )
+
+
 def try_parse_report(
     path: str | pathlib.Path, targets: list[str]
 ) -> list[FailureRecord] | None:
@@ -133,8 +180,10 @@ __all__ = [
     "REPORT_REL",
     "FailureRecord",
     "FailureCluster",
+    "FailureCounts",
     "substitute_report_token",
     "try_parse_report",
+    "try_parse_counts",
     "cluster",
     "cluster_excerpt",
 ]

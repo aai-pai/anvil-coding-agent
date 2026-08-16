@@ -65,6 +65,12 @@ RepairContextLiteral = Literal["slices", "interfaces", "minimal"]
 # lever. Env override ANVIL_REPAIR_LOCALIZATION.
 DEFAULT_REPAIR_LOCALIZATION = "symbols"
 RepairLocalizationLiteral = Literal["symbols", "basename"]
+# v0.1.5 #30 (FR-QT-006): `generate` routes the qa phase to the code path so
+# it emits executable tests; `plan-only` restores v0.1.4 (a test PLAN plus an
+# identical GENERATED.md in each test directory). Commit0 runs pin
+# `plan-only` so the measurement surface is unchanged. Env ANVIL_QA_TESTS.
+DEFAULT_QA_TESTS = "generate"
+QaTestsLiteral = Literal["generate", "plan-only"]
 DEFAULT_MCP_DISCOVERY_TIMEOUT_SECONDS = 5
 DEFAULT_ARTIFACT_VALIDATION_TIMEOUT_SECONDS = 30
 DEFAULT_DRIFT_CHECK_TIMEOUT_SECONDS = 60
@@ -142,6 +148,7 @@ class EffectiveConfig(BaseModel):
     # v0.1.4 #27 (FR-IC-004): interface-aware repair context gate.
     repairContext: RepairContextLiteral = DEFAULT_REPAIR_CONTEXT
     repairLocalization: RepairLocalizationLiteral = DEFAULT_REPAIR_LOCALIZATION
+    qaTests: QaTestsLiteral = DEFAULT_QA_TESTS
 
 
 __all__ = [
@@ -163,6 +170,8 @@ __all__ = [
     "DEFAULT_REPAIR_CONTEXT",
     "DEFAULT_REPAIR_LOCALIZATION",
     "RepairLocalizationLiteral",
+    "DEFAULT_QA_TESTS",
+    "QaTestsLiteral",
     "RepairContextLiteral",
     "RUNTIME_API_VERSION_PREFIX",
     "EVENTS_LOG_PATH",

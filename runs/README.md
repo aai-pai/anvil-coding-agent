@@ -1,6 +1,6 @@
 # runs/
 
-Holds the **output of Anvil's 12-phase lifecycle** — i.e. Anvil actually *building something*.
+Holds the **output of Anvil's 13-phase lifecycle** — i.e. Anvil actually *building something*.
 
 ## Rules
 

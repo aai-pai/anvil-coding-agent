@@ -41,6 +41,38 @@ class ArtifactValidationResult(BaseModel):
     issues: list[ArtifactIssue] = Field(default_factory=list)
 
 
+def collect_count(tests_root: pathlib.Path) -> int | None:
+    """Tests pytest can collect under ``tests_root``; None if it cannot run.
+
+    ``None`` means the question could not be asked (no pytest, timeout) and
+    must not be read as "zero tests" — that would fail a qa phase for an
+    environment problem. Collection is the minimum bar for calling something
+    a test: it proves the module imports and defines test functions.
+    """
+    import subprocess
+    import sys
+
+    if not tests_root.is_dir():
+        return 0
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", "pytest", "--collect-only", "-q",
+             str(tests_root)],
+            capture_output=True, text=True, timeout=120,
+            cwd=str(tests_root.parent),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    import re
+
+    match = re.search(r"(\d+)\s+tests?\s+collected", proc.stdout or "")
+    if match:
+        return int(match.group(1))
+    if "no tests ran" in (proc.stdout or "") or proc.returncode != 0:
+        return 0
+    return None
+
+
 class ArtifactValidator:
     """Validates phase artifacts against schema and structure requirements."""
 
@@ -51,12 +83,20 @@ class ArtifactValidator:
         event_bus: EventBus | None = None,
         run_id: str = "",
         clock: Callable[[], datetime] | None = None,
+        qa_collect: Callable[[pathlib.Path], int | None] | None = None,
     ) -> None:
         self._root = pathlib.Path(workspace_root)
         self._schemas = schemas if schemas is not None else ARTIFACT_SCHEMAS
         self._events = event_bus
         self._run_id = run_id
         self._clock = clock or (lambda: datetime.now(timezone.utc))
+        # #30: injectable, and OFF unless wired. The offline transport writes
+        # placeholder artifacts by design, so a collection gate would fail
+        # every offline plumbing run for a reason that says nothing about the
+        # plumbing. `app.py` wires :func:`collect_count` for real execution
+        # only — the mode where a qa phase claiming to ship tests should be
+        # made to prove it. Injectable so unit tests never spawn pytest.
+        self._qa_collect = qa_collect
 
     def validate(self, phase_id: str, artifact_paths: list[str]) -> ArtifactValidationResult:
         """Validate the phase's required outputs (FR-SV-009)."""
@@ -79,12 +119,31 @@ class ArtifactValidator:
         if phase_id == "implementation":
             issues.extend(self._validate_contract_manifest())
 
+        # v0.1.5 #30 (FR-QT-004): a qa phase that emits .py files which do not
+        # COLLECT has not produced tests. Existence and a .py extension would
+        # be satisfied by three files containing `assert True`.
+        if phase_id == "qa" and self._qa_collect is not None:
+            issues.extend(self._validate_tests_collect())
+
         result = ArtifactValidationResult(
             phase=phase_id, valid=not issues, issues=issues
         )
         if not result.valid:
             self._emit_failure(result)
         return result
+
+    def _validate_tests_collect(self) -> list[ArtifactIssue]:
+        """FR-QT-004: the qa phase's tests must collect, and be non-zero."""
+        tests_root = self._root / "tests"
+        collected = self._qa_collect(tests_root)
+        if collected is None:
+            return []  # unknown, not zero — never fail on a tooling problem
+        if collected == 0:
+            return [ArtifactIssue(
+                path="tests/", kind="empty",
+                detail="pytest collected 0 tests from the qa phase's output",
+            )]
+        return []
 
     def _validate_document(self, schema: ArtifactSchema) -> list[ArtifactIssue]:
         issues: list[ArtifactIssue] = []

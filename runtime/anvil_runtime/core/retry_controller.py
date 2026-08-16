@@ -69,5 +69,15 @@ class RetryController:
             if rid == run_id
         }
 
+    def restore(self, run_id: str, counters: dict[str, int]) -> None:
+        """Rehydrate counters from a checkpoint (FR-FX-002).
+
+        The read side of :meth:`snapshot`, which had no callers at all until
+        v0.1.5 — so a server restart silently reset every phase's retry
+        budget to zero, and resume is a documented, load-bearing feature.
+        """
+        for phase, count in (counters or {}).items():
+            self._attempts[self._key(run_id, phase)] = int(count)
+
 
 __all__ = ["RetryController", "RETRY_BACKOFF_BASE_SECONDS"]

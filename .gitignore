@@ -33,6 +33,11 @@ extension/dist/
 
 # PPT
 *.pptx
+# ...except the versioned overview decks, which are deliberate deliverables
+# and were already tracked despite the rule above.
+!Anvil_Eval_Harness.pptx
+!Anvil_v0.1.2.pptx
+!anvil-development/*/Anvil_*.pptx
 
 # Claude Code local settings (may contain API keys)
 .claude/settings.local.json

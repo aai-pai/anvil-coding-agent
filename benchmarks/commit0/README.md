@@ -76,7 +76,7 @@ the merged package, junit XML) for debugging.
    repo first on `sys.path`). Reports pass rate, plus `collection_error`
    when the package can't even be imported (the skeleton's natural state).
 
-Verified end-to-end: offline run completes all 13 phases on the tinydb
+Verified end-to-end: offline run reaches implementation on the tinydb
 skeleton; injecting the reference implementation through steps 4–5 yields
 10/10 modules applied and 201/201 tests passing.
 

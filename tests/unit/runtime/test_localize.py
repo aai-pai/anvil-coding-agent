@@ -10,6 +10,7 @@ from anvil_runtime.verify import (
     REPORT_REL,
     cluster,
     cluster_excerpt,
+    try_parse_counts,
     substitute_report_token,
     try_parse_report,
 )
@@ -111,3 +112,51 @@ def test_single_testsuite_root_parses(tmp_path: pathlib.Path) -> None:
                                       '<?xml version="1.0"?>')
     records = try_parse_report(_write_report(tmp_path, single), TARGETS)
     assert records is not None and len(records) == 5
+
+
+# -- per-round pass counts (v0.1.5 #31, FR-TM-001) --------------------------
+
+
+def test_counts_parsed_from_testsuite_attributes(tmp_path: pathlib.Path) -> None:
+    report = tmp_path / "r.xml"
+    report.write_text(
+        '<testsuites><testsuite tests="10" failures="3" errors="1" '
+        'skipped="2"><testcase classname="t" name="a"/></testsuite>'
+        "</testsuites>",
+        encoding="utf-8")
+
+    counts = try_parse_counts(report)
+
+    assert counts is not None
+    assert counts.collected == 10
+    assert counts.failed == 4  # failures + errors
+    assert counts.passed == 4  # collected - failed - skipped
+
+
+def test_counts_parsed_when_totals_sit_on_the_root(
+    tmp_path: pathlib.Path,
+) -> None:
+    report = tmp_path / "r.xml"
+    report.write_text(
+        '<testsuites tests="5" failures="1" errors="0" skipped="0"/>',
+        encoding="utf-8")
+
+    counts = try_parse_counts(report)
+
+    assert counts is not None and counts.passed == 4
+
+
+def test_missing_or_malformed_report_is_unknown_not_zero(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Absent must not read as a regression to zero passes."""
+    assert try_parse_counts(tmp_path / "nope.xml") is None
+
+    bad = tmp_path / "bad.xml"
+    bad.write_text("<testsuites><not-closed>", encoding="utf-8")
+    assert try_parse_counts(bad) is None
+
+    no_totals = tmp_path / "empty.xml"
+    no_totals.write_text("<testsuites><testsuite/></testsuites>",
+                         encoding="utf-8")
+    assert try_parse_counts(no_totals) is None

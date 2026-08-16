@@ -153,3 +153,41 @@ def test_single_shot_mode_completes_in_one_advance(tmp_path: pathlib.Path) -> No
     manager.step(run_id)
     assert "implementation" in manager._runs[run_id].completed
     assert len(provider.requests) == 1  # v0.1.2 single completion, unchanged
+
+
+# -- v0.1.5 supervisor correctness (#32/#33) --------------------------------
+
+
+def test_resume_target_honors_tier_exclusions(tmp_path: pathlib.Path) -> None:
+    """FR-FX-001: a resumed simple/standard run must not report a target the
+    very next step() immediately skips."""
+    from anvil_runtime.core.phase_dag import PhaseDAG
+    from anvil_runtime.core.phase_contracts import PHASE_IDS
+
+    dag = PhaseDAG()
+    completed = {"intake", "proposal"}
+    excluded = {"factory-init"}
+
+    assert dag.next_phase(completed) == "factory-init"  # the old, wrong answer
+    assert dag.next_phase(completed | excluded) != "factory-init"
+    assert dag.next_phase(completed | excluded) in PHASE_IDS
+
+
+def test_retry_counters_survive_a_restart() -> None:
+    """FR-FX-002: snapshot() had zero callers, so a restart handed every
+    phase a fresh retry budget."""
+    from anvil_runtime.core.retry_controller import RetryController
+
+    before = RetryController(max_retries_per_phase=2)
+    before.record_failure("run-1", "implementation")
+    before.record_failure("run-1", "implementation")
+    snapshot = before.snapshot("run-1")
+    assert snapshot == {"implementation": 2}
+
+    after = RetryController(max_retries_per_phase=2)
+    after.restore("run-1", snapshot)
+
+    assert after.snapshot("run-1") == snapshot
+    # The budget is spent: a third attempt is not offered after the restart.
+    assert before.should_retry("run-1", "implementation") == \
+        after.should_retry("run-1", "implementation")

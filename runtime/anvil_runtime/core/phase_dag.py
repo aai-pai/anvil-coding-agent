@@ -3,7 +3,7 @@
 Slice 2 deliverable (blueprint §3.1; spec FR-SV-005/006; architecture §4.2,
 §686). v0.1.0 executes phases serially in topological order, but the
 dependencies are declared as a DAG so a future scheduler can parallelize without
-changing phase contracts. The default graph is the linear 12-phase pipeline
+changing phase contracts. The default graph is the linear 13-phase pipeline
 (each phase depends on its predecessor).
 """
 

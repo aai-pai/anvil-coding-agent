@@ -133,6 +133,7 @@ class LLMBackend:
         docker_exec_fn: "object | None" = None,
         repair_context: str | None = None,
         repair_localization: str | None = None,
+        qa_tests: str | None = None,
     ) -> None:
         from anvil_runtime.config.schema import (
             DEFAULT_CODE_MAX_TOKENS,
@@ -141,6 +142,7 @@ class LLMBackend:
             DEFAULT_INPUT_CHAR_LIMIT,
             DEFAULT_INTAKE_MAX_TOKENS,
             DEFAULT_REPAIR_CONTEXT,
+            DEFAULT_QA_TESTS,
             DEFAULT_REPAIR_LOCALIZATION,
             DEFAULT_REPAIR_MAX_ROUNDS,
             DEFAULT_TEST_EXECUTOR,
@@ -190,6 +192,8 @@ class LLMBackend:
         # SET; `basename` restores v0.1.4's single deepest-frame match.
         self._repair_localization = (
             repair_localization or DEFAULT_REPAIR_LOCALIZATION)
+        # v0.1.5 #30 (FR-QT-006): `plan-only` restores v0.1.4's qa phase.
+        self._qa_tests = qa_tests or DEFAULT_QA_TESTS
         self._events = event_bus
         # #14 (FR-INS-002/003): standing instructions, injected as a dedicated
         # block in every prompt; resolved (and capped) upstream, never truncated
@@ -209,13 +213,23 @@ class LLMBackend:
     # phase assesses completeness (#15); all other phases produce a single
     # document artifact.
     CODE_PHASE = "implementation"
+    # v0.1.5 #30 (FR-QT-001): `qa` declares tests/ outputs but routed to the
+    # document path, so it wrote an identical GENERATED.md into each test
+    # directory and never a test. It is a code phase — with its own prompt
+    # mode and its own target derivation, not a reuse of implementation's.
+    QA_PHASE = "qa"
+    CODE_PHASES = (CODE_PHASE, QA_PHASE)
     INTAKE_PHASE = "intake"
     MAX_INTAKE_QUESTIONS = 5  # FR-INT-005
 
     def run(self, session_id: str, step: PhaseStep) -> StepResult:
         cfg = self._sessions.get(session_id)
         model = cfg.model if cfg else "unknown"
-        if step.phase == self.CODE_PHASE:
+        if step.phase == self.QA_PHASE:
+            if self._qa_tests != "generate":
+                return self._run_doc(session_id, step, model)  # v0.1.4
+            return self._run_qa(session_id, step, model)
+        if step.phase in self.CODE_PHASES:
             return self._run_code(session_id, step, model)
         if step.phase == self.INTAKE_PHASE:
             return self._run_intake(session_id, step, model)
@@ -566,6 +580,91 @@ class LLMBackend:
                     return targets
         return targets
 
+    def _run_qa(
+        self, session_id: str, step: PhaseStep, model: str
+    ) -> StepResult:
+        """The qa phase produces BOTH the plan and executable tests (#30).
+
+        v0.1.4 sent qa to the document path, which wrote the plan and then
+        an identical ``GENERATED.md`` into each of ``tests/{unit,integration,
+        e2e}/`` — a test phase that never emitted a test. Routing it wholly
+        to the code path instead would have dropped the plan, which is still
+        worth producing. So: the document path writes only the ``.md``
+        output (never the directory outputs, FR-QT-003), then each derived
+        test module gets its own completion.
+        """
+        doc_step = step.model_copy(update={
+            "output_paths": [p for p in step.output_paths
+                             if p.rstrip("/").endswith(".md")],
+        })
+        result = self._run_doc(session_id, doc_step, model)
+        if result.status != "success":
+            return result
+
+        targets = self._qa_targets(step)
+        if not targets:
+            return result
+        total = dict(result.usage)
+        written = list(result.artifacts)
+        for position, rel in enumerate(targets):
+            self._emit_progress(step, rel, position, len(targets), "generate")
+            reason = self._generate_one(step, model, rel, targets, total)
+            if reason is not None:
+                return self._failed_step(session_id, step, reason, total)
+            written.append(rel)
+        return result.model_copy(update={
+            "artifacts": written, "usage": total,
+            "output": (f"{result.output}; generated {len(targets)} test "
+                       "module(s): " + ", ".join(targets[:8])),
+        })
+
+    def _qa_targets(self, step: PhaseStep) -> list[str]:
+        """Test files for the qa phase (FR-QT-001).
+
+        Deliberately NOT ``_code_targets``: the contract manifest pins
+        ``src/``, so reusing it would have qa regenerate the implementation.
+        Targets come from test paths the plan names, else one unit-test
+        module per generated source file — deterministic, and it never
+        depends on the model naming its own outputs.
+        """
+        allowed = [o.rstrip("/") for o in step.output_paths]
+        prefixes = [a for a in allowed if a.startswith("tests")]
+        if not prefixes:
+            return []
+        targets: list[str] = []
+
+        def add(rel: str) -> None:
+            rel = self._sandbox(rel.replace("\\", "/").strip(), prefixes)
+            if rel.endswith(".py") and rel not in targets:
+                targets.append(rel)
+
+        import re
+
+        pattern = re.compile(
+            r"\b(?:" + "|".join(re.escape(p) for p in prefixes)
+            + r")/[A-Za-z0-9_\-./]*\.py")
+        for rel in step.input_files:
+            source = self._root / rel
+            if not source.is_file():
+                continue
+            for match in pattern.findall(
+                    source.read_text(encoding="utf-8", errors="replace")):
+                add(match)
+                if len(targets) >= self.MAX_PLAN_TARGETS:
+                    return targets
+        if targets:
+            return targets
+
+        src_root = self._root / "src"
+        for path in sorted(src_root.rglob("*.py")) if src_root.is_dir() else []:
+            name = path.stem
+            if name.startswith("_"):
+                continue
+            add(f"{prefixes[0]}/test_{name}.py")
+            if len(targets) >= self.MAX_PLAN_TARGETS:
+                break
+        return targets
+
     def _run_code_per_file(
         self, session_id: str, step: PhaseStep, model: str, targets: list[str]
     ) -> StepResult:
@@ -621,6 +720,8 @@ class LLMBackend:
         return None
 
     def _file_prompt(self, step: PhaseStep, rel: str, targets: list[str]) -> str:
+        if step.phase == self.QA_PHASE:
+            return self._qa_file_prompt(step, rel, targets)
         ctx = self._read_inputs(step)
         lines = [
             "You are the implementation phase agent. Generate exactly ONE file "
@@ -642,6 +743,42 @@ class LLMBackend:
             f"Output ONLY the complete, final contents of `{rel}` — no "
             "commentary, no file markers, no surrounding code fences."
         )
+        return "\n\n".join(lines)
+
+    def _qa_file_prompt(
+        self, step: PhaseStep, rel: str, targets: list[str]
+    ) -> str:
+        """One test module (FR-QT-001) — its own mode, not implementation's.
+
+        The implementation source is the subject under test, so it is the
+        context; the contract still travels so tests assert the pinned
+        behavior rather than whatever the code happens to do.
+        """
+        sources: list[str] = []
+        src_root = self._root / "src"
+        if src_root.is_dir():
+            for path in sorted(src_root.rglob("*.py")):
+                text = path.read_text(encoding="utf-8", errors="replace")
+                relative = path.relative_to(self._root).as_posix()
+                sources.append(
+                    f"=== {relative} ===\n{text[:self._input_char_limit]}")
+        lines = [
+            "You are the QA phase agent. Generate exactly ONE pytest module: "
+            f"`{rel}`.",
+            *self._instructions_block(),
+            *self._contract_block(),
+            ("Implementation under test:\n" + "\n\n".join(sources)) if sources
+            else "No implementation source was found; test the documented "
+                 "behavior.",
+            "All test files being generated in this phase: "
+            + ", ".join(targets) + ".",
+            "Import from the generated package as it is laid out above. "
+            "Every test must execute — no placeholders, no `pass` bodies, "
+            "and no assertions that cannot fail. Assert the behavior the "
+            "contract pins, not merely that functions return without error.",
+            f"Output ONLY the complete, final contents of `{rel}` — no "
+            "commentary, no file markers, no surrounding code fences.",
+        ]
         return "\n\n".join(lines)
 
     def _existing_source(self, step: PhaseStep, rel: str) -> str | None:
@@ -720,6 +857,7 @@ class LLMBackend:
             implicated_files,
             run_external_tests,
             substitute_report_token,
+            try_parse_counts,
             try_parse_report,
         )
 
@@ -846,10 +984,25 @@ class LLMBackend:
                     })
                 else:
                     run = run_tests_fresh()
-                self._emit_backend_event(step, "RepairRoundCompleted", {
+                # #31 (FR-TM-001): pass counts ride the round event so the
+                # monotonicity property is checkable from the event log
+                # alone. Keys are distinct from the existing boolean
+                # `passed` (did the whole suite go green); absent means
+                # unknown, never zero.
+                round_done = {
                     "round": rounds, "exit_code": run.exit_code,
                     "passed": run.passed,
-                })
+                }
+                counts = (try_parse_counts(self._root / report_rel)
+                          if report_rel is not None else None)
+                if counts is not None:
+                    round_done.update({
+                        "tests_passed": counts.passed,
+                        "tests_failed": counts.failed,
+                        "tests_collected": counts.collected,
+                    })
+                self._emit_backend_event(
+                    step, "RepairRoundCompleted", round_done)
                 self._emit_test_outcome(step, run, EVENT_TAIL_CHARS)
         except DockerError as exc:
             return self._failed_step(
@@ -859,6 +1012,15 @@ class LLMBackend:
             if executor is not None:
                 executor.close()
         if not run.passed:
+            # FR-FX-003: exhausting the rounds is a bounded, expected outcome,
+            # not a malfunction. On a benchmark it is the loop's NORMAL exit —
+            # tinydb's full suite is unreachable by construction — so the
+            # event distinguishes it from a genuine phase failure even though
+            # the step still fails into the retry path.
+            self._emit_backend_event(step, "RepairRoundsExhausted", {
+                "rounds": rounds, "exit_code": run.exit_code,
+                "outcome": "bounded-exit",
+            }, severity="warning")
             return self._failed_step(
                 session_id, step,
                 f"external tests still failing after {rounds} repair round(s) "
@@ -1301,6 +1463,12 @@ class LLMBackend:
             written.append(rel)
         if written:
             return written
+        # FR-QT-003: never under tests/. A markdown placeholder there is the
+        # v0.1.4 defect this release closes — it looks like a delivered test
+        # artifact and validation cannot tell it from one. Returning nothing
+        # fails the phase into the existing retry instead.
+        if all(a.replace("\\", "/").split("/")[0] == "tests" for a in allowed):
+            return []
         # Fallback: manifest unparseable -> never crash; keep the raw output so the
         # phase still produces an artifact (validation then drives a retry).
         rel = str(pathlib.PurePosixPath(allowed[0]) / "GENERATED.md")

@@ -22,4 +22,4 @@ Open Chat (Ctrl+Alt+I) and talk to `@anvil`:
 - `@anvil approve` / `@anvil deny` — resolve an approval gate
 - `@anvil health` — check the runtime is reachable
 
-See `docs/QUICKSTART.md` in the repo for the full setup guide.
+See `RUNNING.md` in the repo root for the full setup guide.

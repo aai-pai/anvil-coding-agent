@@ -21,12 +21,14 @@ from anvil_runtime.verify.interface_map import (
 )
 from anvil_runtime.verify.localize import (
     FailureCluster,
+    FailureCounts,
     FailureRecord,
     JUNIT_TOKEN,
     REPORT_REL,
     cluster,
     cluster_excerpt,
     substitute_report_token,
+    try_parse_counts,
     try_parse_report,
 )
 from anvil_runtime.verify.slices import (
@@ -56,8 +58,10 @@ __all__ = [
     "REPORT_REL",
     "FailureRecord",
     "FailureCluster",
+    "FailureCounts",
     "substitute_report_token",
     "try_parse_report",
+    "try_parse_counts",
     "cluster",
     "cluster_excerpt",
     "build_interface_map",
