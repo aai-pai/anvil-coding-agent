@@ -132,6 +132,7 @@ class LLMBackend:
         test_setup_command: str | None = None,
         docker_exec_fn: "object | None" = None,
         repair_context: str | None = None,
+        repair_localization: str | None = None,
     ) -> None:
         from anvil_runtime.config.schema import (
             DEFAULT_CODE_MAX_TOKENS,
@@ -140,6 +141,7 @@ class LLMBackend:
             DEFAULT_INPUT_CHAR_LIMIT,
             DEFAULT_INTAKE_MAX_TOKENS,
             DEFAULT_REPAIR_CONTEXT,
+            DEFAULT_REPAIR_LOCALIZATION,
             DEFAULT_REPAIR_MAX_ROUNDS,
             DEFAULT_TEST_EXECUTOR,
             DEFAULT_TEST_IMAGE,
@@ -184,6 +186,10 @@ class LLMBackend:
         # v0.1.4 #27 (FR-IC-004): `interfaces` injects the passing files'
         # AST interface map into repair prompts; `minimal` is the ablation.
         self._repair_context = repair_context or DEFAULT_REPAIR_CONTEXT
+        # v0.1.5 #28 (FR-FL-007): `symbols` builds a producer-first candidate
+        # SET; `basename` restores v0.1.4's single deepest-frame match.
+        self._repair_localization = (
+            repair_localization or DEFAULT_REPAIR_LOCALIZATION)
         self._events = event_bus
         # #14 (FR-INS-002/003): standing instructions, injected as a dedicated
         # block in every prompt; resolved (and capped) upstream, never truncated
@@ -778,12 +784,16 @@ class LLMBackend:
             return run_tests()
 
         def localize(run):
-            """(implicated files, per-file excerpts, cluster summary).
+            """(implicated files, per-file excerpts, cluster summary, index).
 
             FR-JL-003/004: clusters drive implication, largest cause first,
             and each file's repair prompt gets its cluster's summary. Any
             gap (no token, missing/empty report, no frame matched) degrades
             to the FR-RL-007 basename mapping with the raw tail.
+
+            The AST index is returned so the round performs one pass rather
+            than one per repaired file (architecture §"One AST pass per
+            round"); ``None`` on the paths that never build one.
             """
             if report_rel is not None:
                 records = try_parse_report(self._root / report_rel, artifacts)
@@ -793,21 +803,17 @@ class LLMBackend:
                     }, severity="warning")
                 elif records:
                     clusters = cluster(records)
-                    files: list[str] = []
-                    excerpts: dict[str, str] = {}
-                    for entry in clusters:
-                        if entry.file and entry.file not in excerpts:
-                            files.append(entry.file)
-                            excerpts[entry.file] = cluster_excerpt(entry)
+                    files, excerpts, index = self._implicate(
+                        step, model, clusters, artifacts, total)
                     summary = [
                         {"error_type": entry.error_type, "file": entry.file,
                          "count": entry.size}
                         for entry in clusters
                     ]
                     if files:
-                        return files, excerpts, summary
+                        return files, excerpts, summary, index
             fallback = implicated_files(run.output_tail, artifacts)
-            return fallback or list(artifacts), {}, None
+            return fallback or list(artifacts), {}, None, None
 
         try:
             run = run_tests_fresh()
@@ -815,7 +821,7 @@ class LLMBackend:
             rounds = 0
             while not run.passed and rounds < self._repair_max_rounds:
                 rounds += 1
-                implicated, excerpts, clusters_summary = localize(run)
+                implicated, excerpts, clusters_summary, ast_index = localize(run)
                 round_data = {
                     "round": rounds, "stage": "repair", "implicated": implicated,
                 }
@@ -825,7 +831,7 @@ class LLMBackend:
                     step, "RepairRoundStarted", round_data, severity="warning")
                 failure = self._repair_files(
                     step, model, implicated, artifacts, run.output_tail, total,
-                    excerpts=excerpts,
+                    excerpts=excerpts, ast_index=ast_index,
                 )
                 if failure is not None:
                     return self._failed_step(session_id, step, failure, total)
@@ -874,10 +880,121 @@ class LLMBackend:
             severity="info" if run.passed else "warning",
         )
 
+    # -- fault localization (v0.1.5 #28) ----------------------------------
+
+    def _implicate(
+        self, step: PhaseStep, model: str, clusters: list, artifacts: list[str],
+        total: dict[str, int],
+    ) -> tuple[list[str], dict[str, str], "object | None"]:
+        """Clusters -> (write-set, per-file cluster excerpts, AST index).
+
+        v0.1.4 kept a cluster only when its deepest traceback frame named a
+        generated file and dropped the rest silently — 43 of 67 failures in
+        the healthiest measured run, with no warning and no event. Every
+        cluster is now accounted for: it yields a candidate set (FR-FL-002),
+        or it emits ``UnlocalizedCluster`` (FR-FL-006).
+
+        The candidate set is the permitted write boundary (FR-FL-005); the
+        file actually repaired is the selected one, so a cluster still costs
+        exactly one repair completion. Two clusters selecting the same file
+        merge their excerpts into that file's single completion, preserving
+        FR-RL-008's one-repair-per-file-per-round rule.
+        """
+        from anvil_runtime.verify import cluster_excerpt
+
+        files: list[str] = []
+        excerpts: dict[str, str] = {}
+
+        def _record(rel: str, entry) -> None:
+            text = cluster_excerpt(entry)
+            if rel in excerpts:
+                excerpts[rel] = f"{excerpts[rel]}\n\n{text}"
+            else:
+                files.append(rel)
+                excerpts[rel] = text
+
+        if self._repair_localization != "symbols":
+            for entry in clusters:  # v0.1.4 behavior, byte-for-byte
+                if entry.file:
+                    _record(entry.file, entry)
+            return files, excerpts, None
+
+        from anvil_runtime.verify import build_ast_index, build_candidates
+
+        index = build_ast_index(self._root, artifacts)
+        for entry in clusters:
+            candidates = build_candidates(entry, index)
+            if not candidates:
+                self._emit_backend_event(step, "UnlocalizedCluster", {
+                    "error_type": entry.error_type, "count": entry.size,
+                }, severity="warning")
+                continue
+            chosen = (candidates[0] if len(candidates) == 1
+                      else self._select_fault(
+                          step, model, entry, candidates, index, total))
+            _record(chosen, entry)
+        return files, excerpts, index
+
+    def _select_fault(
+        self, step: PhaseStep, model: str, entry, candidates: list[str],
+        index: "object", total: dict[str, int],
+    ) -> str:
+        """FR-FL-004: ask which candidate is at fault; never a crash path.
+
+        Symbol matching finds where a failure is *described*, which is the
+        failure site. Deciding that ``A`` returned a wrong value that ``B``
+        asserted on is data-flow reasoning, so it is a completion. Any
+        degradation — bad response, out-of-set answer, provider error —
+        falls back to FR-FL-003's ranked first candidate, which is why that
+        ranking is normative rather than advisory.
+        """
+        from anvil_runtime.llm.openrouter_provider import CompletionRequest
+        from anvil_runtime.verify import build_interface_map, cluster_excerpt
+
+        signatures = build_interface_map(
+            self._root, candidates, "", ast_index=index)
+        listing = "\n".join(f"- {rel}" for rel in candidates)
+        prompt = "\n\n".join([
+            "You are diagnosing a test failure. Several files could be at "
+            "fault. Name the ONE most likely to contain the defect.",
+            "Failures:\n" + cluster_excerpt(entry),
+            "Candidate files, most-upstream first (a file that produces "
+            "wrong data is often at fault even when the failure surfaces "
+            "in a file that consumes it):\n" + listing,
+            "Their interfaces:\n" + signatures if signatures else "",
+            "Answer with exactly one path from the candidate list and "
+            "nothing else.",
+        ])
+        try:
+            response = self._provider.complete(CompletionRequest(
+                model=model, prompt=prompt,
+                phase=step.phase, subtask=step.subtask,
+                max_tokens=self.FAULT_SELECTION_MAX_TOKENS,
+                temperature=self._temperature,
+            ))
+        except Exception as exc:  # provider trouble must not lose a round
+            self._emit_backend_event(step, "FaultSelectionDegraded", {
+                "reason": f"provider error: {exc}", "chosen": candidates[0],
+            }, severity="warning")
+            return candidates[0]
+        for key in total:
+            total[key] += int(response.usage.get(key, 0))
+        answer = (getattr(response, "content", "") or "").strip()
+        for rel in candidates:  # longest first: paths can be suffixes
+            if rel in answer:
+                return rel
+        self._emit_backend_event(step, "FaultSelectionDegraded", {
+            "reason": "response named no candidate", "chosen": candidates[0],
+        }, severity="warning")
+        return candidates[0]
+
+    FAULT_SELECTION_MAX_TOKENS = 64
+
     def _repair_files(
         self, step: PhaseStep, model: str, files: list[str],
         artifacts: list[str], failure_tail: str, total: dict[str, int],
         excerpts: dict[str, str] | None = None,
+        ast_index: "object | None" = None,
     ) -> str | None:
         """One repair completion per implicated file; returns a failure reason
         or None. Non-implicated files are never touched (FR-RL-008); with no
@@ -889,7 +1006,8 @@ class LLMBackend:
         for index, rel in enumerate(files):
             self._emit_progress(step, rel, index, len(files), "repair")
             excerpt = (excerpts or {}).get(rel, failure_tail)
-            prompt = self._repair_prompt(step, rel, excerpt, artifacts)
+            prompt = self._repair_prompt(step, rel, excerpt, artifacts,
+                                         ast_index=ast_index)
             self._persist_repair_prompt(rel, prompt)
             response = self._provider.complete(CompletionRequest(
                 model=model, prompt=prompt,
@@ -929,6 +1047,7 @@ class LLMBackend:
     def _repair_prompt(
         self, step: PhaseStep, rel: str, failure_tail: str,
         artifacts: list[str] | None = None,
+        ast_index: "object | None" = None,
     ) -> str:
         existing = self._existing_source(step, rel) or "(file is missing)"
         parts = [
@@ -937,14 +1056,32 @@ class LLMBackend:
             *self._instructions_block(),
             *self._contract_block(),
         ]
+        # #29 (FR-DS-001/002): the bodies of THIS file's upstream
+        # dependencies — a fix that must decide whether the fault is here or
+        # upstream needs to see what upstream does, not just its shape.
+        # Read-only (FR-DS-003): only the repaired file is written.
+        if self._repair_context == "slices" and artifacts:
+            from anvil_runtime.verify import build_ast_index, build_slices
+
+            index = ast_index or build_ast_index(self._root, artifacts)
+            slice_block = build_slices(self._root, [rel], index)
+            if slice_block:
+                parts.append(
+                    "Source of the files `" + rel + "` depends on (read-only "
+                    "context — if the defect is in one of these, say so in "
+                    "your fix rather than working around it here):\n"
+                    + slice_block
+                )
         # #27 (FR-IC-001..003): the passing files' interfaces travel with
         # every resubmission so a targeted fix keeps functional harmony.
         # `minimal` skips this block entirely (the ablation contract is at
         # the prompt level: byte-for-byte first-iteration prompts).
-        if self._repair_context == "interfaces" and artifacts:
-            from anvil_runtime.verify import build_interface_map
+        if self._repair_context in ("interfaces", "slices") and artifacts:
+            from anvil_runtime.verify import build_ast_index, build_interface_map
 
-            interfaces = build_interface_map(self._root, artifacts, rel)
+            index = ast_index or build_ast_index(self._root, artifacts)
+            interfaces = build_interface_map(
+                self._root, artifacts, rel, ast_index=index)
             if interfaces:
                 parts.append(
                     "Interfaces of the OTHER generated files (read-only "

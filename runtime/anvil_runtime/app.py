@@ -132,8 +132,11 @@ def _build_real_manager(
     test_image = os.environ.get("ANVIL_TEST_IMAGE") or cfg.testImage
     test_setup_command = (
         os.environ.get("ANVIL_TEST_SETUP_COMMAND") or cfg.testSetupCommand)
-    # v0.1.4 #27 (FR-IC-004): repair-context gate, same precedence.
+    # v0.1.4 #27 (FR-IC-004) / v0.1.5 #29 (FR-DS-004): repair-context gate.
     repair_context = os.environ.get("ANVIL_REPAIR_CONTEXT") or cfg.repairContext
+    # v0.1.5 #28 (FR-FL-007): fault-localization gate, same precedence.
+    repair_localization = (
+        os.environ.get("ANVIL_REPAIR_LOCALIZATION") or cfg.repairLocalization)
     backend = LLMBackend(
         provider, workspace_root, input_char_limit=input_char_limit, event_bus=bus,
         instructions=instructions,
@@ -149,6 +152,7 @@ def _build_real_manager(
         test_image=test_image,
         test_setup_command=test_setup_command,
         repair_context=repair_context,
+        repair_localization=repair_localization,
     )
     # FR-ML-004: a configured allowedModels list becomes an enforced whitelist
     # (with switch-to-allowed remediation); an empty list means unrestricted.

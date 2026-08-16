@@ -51,12 +51,20 @@ DEFAULT_TEST_EXECUTOR = "local"
 DEFAULT_TEST_IMAGE = "python:3.11-slim"
 TEST_EXECUTORS: tuple[str, ...] = ("local", "docker")
 TestExecutorLiteral = Literal["local", "docker"]
-# v0.1.4 #27: repair-prompt context. `interfaces` (default) injects the
-# AST interface map of the passing artifacts (functional-harmony
-# constraint); `minimal` restores the #23-as-first-shipped prompts —
-# the ablation lever. Env override ANVIL_REPAIR_CONTEXT.
-DEFAULT_REPAIR_CONTEXT = "interfaces"
-RepairContextLiteral = Literal["interfaces", "minimal"]
+# v0.1.4 #27 / v0.1.5 #29: repair-prompt context. `slices` (v0.1.5
+# default) adds the BODIES of the candidates' upstream dependencies on top
+# of the interface map — selecting A over B needs to see what A does;
+# `interfaces` restores v0.1.4 (signatures only); `minimal` restores the
+# #23-as-first-shipped prompts. The ablation ladder. Env override
+# ANVIL_REPAIR_CONTEXT.
+DEFAULT_REPAIR_CONTEXT = "slices"
+RepairContextLiteral = Literal["slices", "interfaces", "minimal"]
+# v0.1.5 #28 (FR-FL-007): fault localization. `symbols` (default) builds a
+# candidate SET from the AST symbol index and ranks it producer-first;
+# `basename` restores v0.1.4's deepest-frame basename match — the ablation
+# lever. Env override ANVIL_REPAIR_LOCALIZATION.
+DEFAULT_REPAIR_LOCALIZATION = "symbols"
+RepairLocalizationLiteral = Literal["symbols", "basename"]
 DEFAULT_MCP_DISCOVERY_TIMEOUT_SECONDS = 5
 DEFAULT_ARTIFACT_VALIDATION_TIMEOUT_SECONDS = 30
 DEFAULT_DRIFT_CHECK_TIMEOUT_SECONDS = 60
@@ -133,6 +141,7 @@ class EffectiveConfig(BaseModel):
     testSetupCommand: str | None = None
     # v0.1.4 #27 (FR-IC-004): interface-aware repair context gate.
     repairContext: RepairContextLiteral = DEFAULT_REPAIR_CONTEXT
+    repairLocalization: RepairLocalizationLiteral = DEFAULT_REPAIR_LOCALIZATION
 
 
 __all__ = [
@@ -152,6 +161,8 @@ __all__ = [
     "TEST_EXECUTORS",
     "TestExecutorLiteral",
     "DEFAULT_REPAIR_CONTEXT",
+    "DEFAULT_REPAIR_LOCALIZATION",
+    "RepairLocalizationLiteral",
     "RepairContextLiteral",
     "RUNTIME_API_VERSION_PREFIX",
     "EVENTS_LOG_PATH",

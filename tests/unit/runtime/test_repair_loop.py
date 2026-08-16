@@ -492,3 +492,232 @@ def test_docker_infra_failure_fails_step_with_reason_and_cleans_up(
     assert "docker test executor failed" in result.failure_reason
     assert "simulated cp failure" in result.failure_reason
     assert cli.subcommands().count("rm") == 1  # finally-cleanup ran
+
+
+# -- fault-aware localization (v0.1.5 #28/#29) ------------------------------
+
+# The failure names a SYMBOL (`alpha_marker`) and never a source basename —
+# the assertion-shaped failure v0.1.4 silently discarded. Test file is
+# `test_x.py` on purpose: `test_alpha.py` would contain "alpha.py" and be
+# picked up by the basename matcher, hiding what is being tested.
+SYMBOL_JUNIT_SCRIPT = textwrap.dedent("""\
+    import pathlib, sys
+    report = pathlib.Path(sys.argv[1])
+    report.parent.mkdir(parents=True, exist_ok=True)
+    text = pathlib.Path("src/alpha.py").read_text(encoding="utf-8")
+    if "FIXED" in text:
+        report.write_text("<testsuites><testsuite>"
+                          "<testcase classname='t' name='ok'/>"
+                          "</testsuite></testsuites>", encoding="utf-8")
+        sys.exit(0)
+    report.write_text('''<testsuites><testsuite>
+    <testcase classname="tests.test_x" name="test_a">
+    <failure message="AssertionError: alpha_marker returned the wrong value">
+    tests/test_x.py:9: in test_a</failure></testcase>
+    </testsuite></testsuites>''', encoding="utf-8")
+    print("1 test failed")
+    sys.exit(1)
+    """)
+
+ALPHA_SYMBOL = "def alpha_marker():\n    return 'not yet'\n"
+ALPHA_FIXED = "def alpha_marker():\n    return 'FIXED'\n"
+BETA_USES_ALPHA = "from alpha import alpha_marker\n\ndef beta_entry():\n    return alpha_marker()\n"
+
+
+def _stage_symbol_junit(tmp_path: pathlib.Path) -> str:
+    _stage(tmp_path)
+    (tmp_path / "check_symbol.py").write_text(SYMBOL_JUNIT_SCRIPT,
+                                              encoding="utf-8")
+    return sys.executable + " check_symbol.py {junit_xml}"
+
+
+def test_symbol_only_failure_is_repaired_not_dropped(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The v0.1.4 loop dropped this cluster silently — 43 of 67 failures in
+    the healthiest measured run. It must now reach repair."""
+    command = _stage_symbol_junit(tmp_path)
+    backend, _provider, bus = _backend(
+        tmp_path, [ALPHA_SYMBOL, BETA_USES_ALPHA, ALPHA_FIXED], command,
+    )
+
+    result = _run_impl(backend)
+
+    assert result.status == "success"
+    assert "RepairRoundStarted" in bus.types()
+    assert "UnlocalizedCluster" not in bus.types()
+    assert "FIXED" in (tmp_path / "src/alpha.py").read_text(encoding="utf-8")
+
+
+def test_basename_gate_restores_v014_blindness(tmp_path: pathlib.Path) -> None:
+    """FR-FL-007 ablation: with `basename`, the same cluster is unlocalized
+    and the loop falls back to regenerating everything, as v0.1.4 did."""
+    command = _stage_symbol_junit(tmp_path)
+    backend, provider, _bus = _backend(
+        tmp_path, [ALPHA_SYMBOL, BETA_USES_ALPHA, ALPHA_FIXED, ALPHA_FIXED],
+        command, repair_localization="basename",
+    )
+
+    _run_impl(backend)
+
+    # No selection completion is ever issued on the basename path.
+    prompts = [r.prompt for r in provider.requests]
+    assert not any("Name the ONE most likely" in p for p in prompts)
+
+
+def test_unlocalized_cluster_is_reported_not_silently_dropped(
+    tmp_path: pathlib.Path,
+) -> None:
+    """FR-FL-006: a cluster naming nothing indexable still leaves a trace."""
+    command = _stage_symbol_junit(tmp_path)
+    # Generated code defines no symbol the failure text names.
+    backend, _provider, bus = _backend(
+        tmp_path,
+        ["def unrelated():\n    return 1\n", GOOD_BETA, ALPHA_FIXED],
+        command,
+    )
+
+    _run_impl(backend)
+
+    assert "UnlocalizedCluster" in bus.types()
+
+
+def test_selection_is_skipped_when_only_one_candidate(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Architecture §#28 step 4: the unambiguous case must not pay for a
+    completion."""
+    command = _stage_symbol_junit(tmp_path)
+    backend, provider, _bus = _backend(
+        tmp_path, [ALPHA_SYMBOL, GOOD_BETA, ALPHA_FIXED], command,
+    )
+
+    _run_impl(backend)
+
+    prompts = [r.prompt for r in provider.requests]
+    assert not any("Name the ONE most likely" in p for p in prompts)
+
+
+def test_slices_gate_adds_upstream_bodies_and_interfaces_does_not(
+    tmp_path: pathlib.Path,
+) -> None:
+    """FR-DS-004: the ablation contract is at the prompt level.
+
+    ``alpha.py`` is made to depend on ``beta.py`` so the repaired file has
+    an upstream to slice — a leaf file correctly produces no slice block.
+    """
+    command = _stage_symbol_junit(tmp_path)
+    alpha_dep = ("from beta import beta_helper\n\n"
+                 "def alpha_marker():\n    return beta_helper()\n")
+    beta_helper = "def beta_helper():\n    return 'not yet'\n"
+    alpha_dep_fixed = ("from beta import beta_helper\n\n"
+                       "def alpha_marker():\n    return 'FIXED'\n")
+
+    backend, provider, _bus = _backend(
+        tmp_path, [alpha_dep, beta_helper, alpha_dep_fixed], command,
+    )
+    _run_impl(backend)
+    with_slices = [r.prompt for r in provider.requests
+                   if "REPAIR mode" in r.prompt]
+
+    backend2, provider2, _bus2 = _backend(
+        tmp_path, [alpha_dep, beta_helper, alpha_dep_fixed], command,
+        repair_context="interfaces",
+    )
+    _run_impl(backend2)
+    with_interfaces = [r.prompt for r in provider2.requests
+                       if "REPAIR mode" in r.prompt]
+
+    assert with_slices and with_interfaces
+    assert any("depends on (read-only" in p for p in with_slices)
+    assert not any("depends on (read-only" in p for p in with_interfaces)
+
+
+# Names symbols from BOTH generated files, so the cluster is ambiguous and
+# fault selection (FR-FL-004) has to run.
+MULTI_JUNIT_SCRIPT = textwrap.dedent("""\
+    import pathlib, sys
+    report = pathlib.Path(sys.argv[1])
+    report.parent.mkdir(parents=True, exist_ok=True)
+    text = pathlib.Path("src/alpha.py").read_text(encoding="utf-8")
+    if "FIXED" in text:
+        report.write_text("<testsuites><testsuite>"
+                          "<testcase classname='t' name='ok'/>"
+                          "</testsuite></testsuites>", encoding="utf-8")
+        sys.exit(0)
+    report.write_text('''<testsuites><testsuite>
+    <testcase classname="tests.test_x" name="test_a">
+    <failure message="AssertionError: alpha_marker got a bad value from beta_helper">
+    tests/test_x.py:9: in test_a</failure></testcase>
+    </testsuite></testsuites>''', encoding="utf-8")
+    print("1 test failed")
+    sys.exit(1)
+    """)
+
+ALPHA_DEP = ("from beta import beta_helper\n\n"
+             "def alpha_marker():\n    return beta_helper()\n")
+BETA_HELPER = "def beta_helper():\n    return 'not yet'\n"
+ALPHA_DEP_FIXED = ("from beta import beta_helper\n\n"
+                   "def alpha_marker():\n    return 'FIXED'\n")
+
+
+def _stage_multi_junit(tmp_path: pathlib.Path) -> str:
+    _stage(tmp_path)
+    (tmp_path / "check_multi.py").write_text(MULTI_JUNIT_SCRIPT,
+                                             encoding="utf-8")
+    return sys.executable + " check_multi.py {junit_xml}"
+
+
+def test_ambiguous_cluster_issues_one_selection_completion(
+    tmp_path: pathlib.Path,
+) -> None:
+    """FR-FL-004: one completion per ambiguous cluster, not per candidate."""
+    command = _stage_multi_junit(tmp_path)
+    backend, provider, _bus = _backend(
+        tmp_path, [ALPHA_DEP, BETA_HELPER, "src/alpha.py", ALPHA_DEP_FIXED],
+        command,
+    )
+
+    _run_impl(backend)
+
+    selections = [r for r in provider.requests
+                  if "Name the ONE most likely" in r.prompt]
+    assert len(selections) == 1
+    assert selections[0].max_tokens == backend.FAULT_SELECTION_MAX_TOKENS
+    # The candidate listing carries the producer-first ordering.
+    assert "src/beta.py" in selections[0].prompt
+
+
+def test_out_of_set_selection_degrades_to_ranked_first_candidate(
+    tmp_path: pathlib.Path,
+) -> None:
+    """FR-FL-004: selection is never a crash path, and FR-FL-003's ranking is
+    the defined fallback — which is why it is normative, not advisory."""
+    command = _stage_multi_junit(tmp_path)
+    backend, _provider, bus = _backend(
+        tmp_path,
+        [ALPHA_DEP, BETA_HELPER, "I have no idea", ALPHA_DEP_FIXED],
+        command,
+    )
+
+    result = _run_impl(backend)
+
+    assert "FaultSelectionDegraded" in bus.types()
+    assert result.status in ("success", "failure")  # degraded, not crashed
+
+
+def test_selection_completion_usage_is_accounted(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The extra completion must show up in the step's usage, or the release
+    would under-report its own token cost."""
+    command = _stage_multi_junit(tmp_path)
+    backend, _provider, _bus = _backend(
+        tmp_path, [ALPHA_DEP, BETA_HELPER, "src/alpha.py", ALPHA_DEP_FIXED],
+        command,
+    )
+
+    result = _run_impl(backend)
+
+    # 2 generation + 1 selection + 1 repair completions, 7 tokens each.
+    assert result.usage["total_tokens"] == 4 * 7
